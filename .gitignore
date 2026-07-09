@@ -1,0 +1,17 @@
+# ── DATA MUST NEVER BE COMMITTED ──────────────────────────────
+*.xls
+*.xlsx
+*.xlsm
+*.csv
+*.pdf
+*.json
+inbox/
+unified/
+processed/
+# ── python / streamlit ────────────────────────────────────────
+__pycache__/
+*.pyc
+.venv/
+venv/
+.streamlit/secrets.toml
+.DS_Store
