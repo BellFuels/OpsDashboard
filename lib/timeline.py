@@ -170,7 +170,7 @@ def build_timeline(data, iso_date):
         barmode="overlay", height=110 + 52 * len(drivers),
         yaxis=dict(categoryorder="array", categoryarray=list(reversed(names)), title=None),
         xaxis=dict(type="date", tickformat="%-I:%M %p", title=None, gridcolor="#e2ebe5"),
-        plot_bgcolor="white", paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
         legend=dict(orientation="h", yanchor="top", y=-0.08),
         margin=dict(l=10, r=10, t=10, b=10), bargap=0.25,
         hoverdistance=40,

@@ -8,6 +8,7 @@ written to disk, nothing is cached across sessions, nothing is committed to git.
 
 import hashlib
 import io
+import os
 from datetime import date, datetime, timedelta
 
 import pandas as pd
@@ -25,6 +26,10 @@ YELLOW_BG = "background-color: rgba(192,139,21,0.15)"
 GREEN_FG = "color: #1d9e50"
 
 st.set_page_config(page_title="Route Tracker — Bell Fuels", page_icon="◆", layout="wide")
+st.markdown("""<style>
+[data-testid="stMetricValue"] { font-size: 1.55rem; font-weight: 700; }
+[data-testid="stMetricLabel"] p { font-size: .8rem; }
+</style>""", unsafe_allow_html=True)
 
 
 def iso_to_mdy(iso):
@@ -49,11 +54,36 @@ if uploaded is not None:
         except UnifiedFileError as e:
             st.error(str(e))
             st.stop()
+elif "data" not in st.session_state:
+    # local development only: preload a file so the app renders without an upload
+    _dev = os.environ.get("ORACLE_DEV_FILE", "")
+    if _dev and os.path.exists(_dev):
+        st.session_state.data = load_unified(open(_dev, "rb").read())
 
 data = st.session_state.get("data")
 
+
+def page_header(subtitle_html=""):
+    st.markdown(
+        f"""<div style="display:flex;align-items:baseline;gap:.6rem;flex-wrap:wrap;margin-bottom:.1rem;">
+              <span style="font-size:2.1rem;color:{ACCENT};line-height:1;">◆</span>
+              <span style="font-size:2.1rem;font-weight:700;letter-spacing:-.02em;line-height:1.1;">Route Tracker</span>
+              <span style="font-size:1rem;opacity:.55;font-weight:500;">Bell Fuels Service Co.</span>
+            </div>{subtitle_html}""",
+        unsafe_allow_html=True)
+
+
+def status_pills(items):
+    pill = ("display:inline-block;padding:.15rem .6rem;margin:.15rem .3rem 0 0;"
+            "border:1px solid rgba(39,160,94,.35);border-radius:99px;"
+            "font-size:.8rem;color:#3c5547;background:rgba(39,160,94,.06);")
+    return ("<div style='margin:.2rem 0 .4rem 0;'>"
+            + "".join(f"<span style='{pill}'>{k} <b style='color:#1a2e22'>{v}</b></span>" for k, v in items)
+            + "</div>")
+
+
 if data is None:
-    st.markdown(f"# <span style='color:{ACCENT}'>◆</span> Route Tracker", unsafe_allow_html=True)
+    page_header()
     st.info("**Drop the unified file from the daily email into the box in the left sidebar** "
             "(Bell_Unified_….xlsx). Nothing is stored — you upload it each visit.")
     st.stop()
@@ -66,9 +96,12 @@ dates = data.dates
 latest = dates[-1]
 n_stops = len(data.rolled_history)
 
-st.markdown(f"# <span style='color:{ACCENT}'>◆</span> Route Tracker", unsafe_allow_html=True)
-st.caption(f"Data through **{iso_to_mdy(latest)}** · {len(dates)} days · {n_stops:,} stops · "
-           f"built {data.meta.get('build_date', '—')}")
+page_header(status_pills([
+    ("Data through", iso_to_mdy(latest)),
+    ("Days", f"{len(dates)}"),
+    ("Stops", f"{n_stops:,}"),
+    ("Built", data.meta.get("build_date", "—")),
+]))
 
 tab_qv, tab_daily, tab_drivers, tab_payroll, tab_settings = st.tabs(
     ["⚡ Quick View", "📋 Daily Route Performance", "👤 Drivers", "⏱ Payroll & HOS", "⚙ Settings"])
@@ -87,15 +120,20 @@ with tab_qv:
     week_rolled = data.rolled_history[(data.rolled_history["date"] >= wk_start) & (data.rolled_history["date"] <= wk_end)]
     month_rolled = data.rolled_history[(data.rolled_history["date"] >= mo_start) & (data.rolled_history["date"] <= mo_end)]
 
-    c1, c2, c3, c4, c5, c6 = st.columns(6)
-    c1.metric("Total gallons (day)", f"{day_rolled['gallons'].sum():,.1f}")
-    c2.metric(f"Shift 1 · punch-in before {data.shift_split_time}", f"{s1:,.1f}")
-    c3.metric(f"Shift 2 · punch-in from {data.shift_split_time}", f"{s2:,.1f}")
-    c4.metric(f"Week · {wk_label}", f"{week_rolled['gallons'].sum():,.1f}")
-    c5.metric(f"Month · {mo_label}", f"{month_rolled['gallons'].sum():,.1f}")
-    c6.metric(f"Projected · {mo_label}", f"{calc.projected_month_gallons(data.rolled_history, qd):,.1f}",
-              help="Actual gallons through the selected date, plus day-of-week averages "
-                   "(last 6 weeks, no-delivery days count as zero) for the rest of the month.")
+    g_day, g_shift, g_period = st.columns([1.1, 2.1, 3.2])
+    with g_day, st.container(border=True):
+        st.metric("Total gallons (day)", f"{day_rolled['gallons'].sum():,.1f}")
+    with g_shift, st.container(border=True):
+        sc1, sc2 = st.columns(2)
+        sc1.metric(f"Shift 1 · in before {data.shift_split_time}", f"{s1:,.1f}")
+        sc2.metric(f"Shift 2 · in from {data.shift_split_time}", f"{s2:,.1f}")
+    with g_period, st.container(border=True):
+        pc1, pc2, pc3 = st.columns(3)
+        pc1.metric(f"Week · {wk_label}", f"{week_rolled['gallons'].sum():,.1f}")
+        pc2.metric(f"Month · {mo_label}", f"{month_rolled['gallons'].sum():,.1f}")
+        pc3.metric("Projected month-end", f"{calc.projected_month_gallons(data.rolled_history, qd):,.1f}",
+                   help="Actual gallons through the selected date, plus day-of-week averages "
+                        "(last 6 weeks, no-delivery days count as zero) for the rest of the month.")
     if no_time_n:
         st.caption(f"⚠ {no_time_n} stop(s) with no punch data and no arrival time "
                    f"({no_time_gal:,.1f} gal) counted into Shift 1.")
@@ -110,7 +148,7 @@ with tab_qv:
                 ("Gravity avg Gal/Min", f"{m['grav_gpm']:.3f} gal/min" if m["grav_gpm"] else "—"),
                 ("Generator avg Gal/Min", f"{m['gen_gpm']:.3f} gal/min" if m["gen_gpm"] else "—"),
                 ("Tank avg Gal/Min", f"{m['tank_gpm']:.3f} gal/min" if m["tank_gpm"] else "—")]
-        with col:
+        with col, st.container(border=True):
             st.markdown(f"**{title}**  \n:gray[{subtitle}]")
             st.dataframe(pd.DataFrame(rows, columns=["Metric", "Value"]),
                          hide_index=True, use_container_width=True)
@@ -133,8 +171,9 @@ with tab_qv:
         hint = f" Punch data exists for: {', '.join(iso_to_mdy(d) for d in pay_dates[-5:])}." if pay_dates else ""
         st.info(f"No punch data for {iso_to_mdy(qd)}.{hint}")
     else:
-        st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
-        st.dataframe(summary, hide_index=True, use_container_width=True)
+        with st.container(border=True):
+            st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+            st.dataframe(summary, hide_index=True, use_container_width=True)
 
 
 # ─── Daily Route Performance ─────────────────────────────────────────────────
@@ -267,7 +306,7 @@ with tab_drivers:
                 text=[f"{b[1]:,.1f}" for b in bars], textposition="outside"))
             title = (f"{comp[0]} — avg {metric} vs others at their stops ({len(stops)} stops)"
                      if mode == "single" else f"Avg {metric} at shared stops ({len(stops)} stops)")
-            fig.update_layout(title=title, height=120 + 34 * len(bars), plot_bgcolor="white",
+            fig.update_layout(title=title, height=120 + 34 * len(bars), plot_bgcolor="rgba(0,0,0,0)",
                               margin=dict(l=10, r=40, t=50, b=10),
                               yaxis=dict(autorange="reversed"))
             st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
