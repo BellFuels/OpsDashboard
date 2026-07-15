@@ -84,13 +84,20 @@ def build_timeline(data, iso_date):
             segs.append((start, max(dur, 2), kind,
                          f"<b>{r['stop']}</b><br>{r['gallons']:g} gal · "
                          f"{fmt_clock(start)} → {fmt_clock(start + dur)}"))
-        # travel time between consecutive physical stops (before DVIR blocks are added)
-        stops_sorted = sorted(segs, key=lambda s: s[0])
+        # travel-time gaps (≥30 min): from end of pre-trip DVIR, between stops,
+        # to start of post-trip DVIR. Tracks the furthest end seen so far so
+        # overlapping/nested stops don't hide or misplace a gap.
         gaps = []
-        for a, b in zip(stops_sorted, stops_sorted[1:]):
-            gap = b[0] - (a[0] + a[1])
+        if segs:
+            cur_end = in_m + DVIR_MINS
+            for s in sorted(segs, key=lambda x: x[0]):
+                gap = s[0] - cur_end
+                if gap >= 30:
+                    gaps.append((cur_end + gap / 2, gap))
+                cur_end = max(cur_end, s[0] + s[1])
+            gap = (out_m - DVIR_MINS) - cur_end
             if gap >= 30:
-                gaps.append((a[0] + a[1] + gap / 2, gap))
+                gaps.append((cur_end + gap / 2, gap))
         segs.append((in_m, DVIR_MINS, "dvir", f"Pre-Trip DVIR · {fmt_hmm(DVIR_MINS)}"))
         segs.append((out_m - DVIR_MINS, DVIR_MINS, "dvir", f"Post-Trip DVIR · {fmt_hmm(DVIR_MINS)}"))
         shift = out_m - in_m
