@@ -80,7 +80,8 @@ with tab_qv:
     qd = st.selectbox("Selected date", list(reversed(dates)), format_func=iso_to_mdy)
     raw_day = data.deliveries_no_fleet[data.deliveries_no_fleet["date"] == qd]
     day_rolled = data.rolled_history[data.rolled_history["date"] == qd]
-    s1, s2, no_time_gal, no_time_n = calc.shift_split_gallons(raw_day, data.shift_split_time)
+    pay_day = data.payroll[(data.payroll["date"] == qd) & (data.payroll["clock_in"] != "")]
+    s1, s2, no_time_gal, no_time_n = calc.shift_split_gallons(raw_day, data.shift_split_time, pay_day)
     wk_start, wk_end, wk_label = calc.week_range(qd)
     mo_start, mo_end, mo_label = calc.month_range(qd)
     week_rolled = data.rolled_history[(data.rolled_history["date"] >= wk_start) & (data.rolled_history["date"] <= wk_end)]
@@ -88,12 +89,13 @@ with tab_qv:
 
     c1, c2, c3, c4, c5 = st.columns(5)
     c1.metric("Total gallons (day)", f"{day_rolled['gallons'].sum():,.1f}")
-    c2.metric(f"Shift 1 · before {data.shift_split_time}", f"{s1:,.1f}")
-    c3.metric(f"Shift 2 · from {data.shift_split_time}", f"{s2:,.1f}")
+    c2.metric(f"Shift 1 · punch-in before {data.shift_split_time}", f"{s1:,.1f}")
+    c3.metric(f"Shift 2 · punch-in from {data.shift_split_time}", f"{s2:,.1f}")
     c4.metric(f"Week · {wk_label}", f"{week_rolled['gallons'].sum():,.1f}")
     c5.metric(f"Month · {mo_label}", f"{month_rolled['gallons'].sum():,.1f}")
     if no_time_n:
-        st.caption(f"⚠ {no_time_n} stop(s) with no arrival time ({no_time_gal:,.1f} gal) counted into Shift 1.")
+        st.caption(f"⚠ {no_time_n} stop(s) with no punch data and no arrival time "
+                   f"({no_time_gal:,.1f} gal) counted into Shift 1.")
 
     def metrics_card(col, title, subtitle, rolled):
         m = calc.quick_view_service_metrics(rolled)

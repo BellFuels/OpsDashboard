@@ -70,22 +70,37 @@ def pct_diff(val, avg):
 
 # ─── Quick View ──────────────────────────────────────────────────────────────
 
-def shift_split_gallons(raw_day, split_hhmm):
-    """Port of v2 Quick View shift loop: gallons before vs at/after the split
-    (arrival wall-clock). Unparseable arrivals count into Shift 1 (v2 parity)."""
+def shift_split_gallons(raw_day, split_hhmm, pay_day=None):
+    """Driver-based shift split: a driver whose punch-in is before the split
+    time is a Shift 1 driver, at/after it a Shift 2 driver — every delivery
+    they make that day follows them, regardless of the stop's clock time.
+    Deliveries by drivers with no punch that day fall back to the old
+    arrival wall-clock rule (unparseable arrivals count into Shift 1 and
+    are reported in the no_time counters)."""
+    from lib.timeline import to_abs_mins
     h, m = (int(x) for x in split_hhmm.split(":"))
     cutoff = h * 60 + m
+    driver_shift = {}
+    if pay_day is not None:
+        for _, p in pay_day.iterrows():
+            in_m = to_abs_mins(p["clock_in"], None)
+            if in_m is not None:
+                driver_shift[str(p["driver"]).lower()] = 1 if in_m < cutoff else 2
     shift1 = shift2 = no_time_gal = 0.0
     no_time_n = 0
     for _, r in raw_day.iterrows():
         g = r["gallons"] or 0
-        if pd.isna(r["arrival"]):
-            no_time_gal += g
-            no_time_n += 1
-            shift1 += g
-            continue
-        clock_m = r["arrival"].hour * 60 + r["arrival"].minute
-        if clock_m < cutoff:
+        # deliveries name drivers in full; payroll by display first name
+        s = driver_shift.get(str(r["driver"] or "").split(" ")[0].lower())
+        if s is None:
+            if pd.isna(r["arrival"]):
+                no_time_gal += g
+                no_time_n += 1
+                s = 1
+            else:
+                clock_m = r["arrival"].hour * 60 + r["arrival"].minute
+                s = 1 if clock_m < cutoff else 2
+        if s == 1:
             shift1 += g
         else:
             shift2 += g
