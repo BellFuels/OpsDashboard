@@ -129,6 +129,32 @@ def yard_downtime_totals(pay_rows):
     return yard_tot, down_tot
 
 
+def projected_month_gallons(rolled_history, iso_date):
+    """Projected month-end gallons for the month containing iso_date:
+    actual gallons through the selected date, plus a day-of-week average
+    (last 6 weeks ending at the selected date, zero-delivery days counted
+    as zeros) for each remaining calendar day of the month."""
+    d = datetime.strptime(iso_date, "%Y-%m-%d").date()
+    mo_start, mo_end, _ = month_range(iso_date)
+    daily = rolled_history.groupby("date")["gallons"].sum()
+    data_min = rolled_history["date"].min() if len(rolled_history) else iso_date
+    actual = float(sum(g for dt, g in daily.items() if mo_start <= dt <= iso_date))
+    sums, counts = [0.0] * 7, [0] * 7
+    for i in range(42):
+        day = d - timedelta(days=i)
+        if day.isoformat() < data_min:
+            continue  # don't count days before the file's history begins
+        sums[day.weekday()] += float(daily.get(day.isoformat(), 0.0))
+        counts[day.weekday()] += 1
+    avgs = [sums[i] / counts[i] if counts[i] else 0.0 for i in range(7)]
+    end = datetime.strptime(mo_end, "%Y-%m-%d").date()
+    proj, day = actual, d + timedelta(days=1)
+    while day <= end:
+        proj += avgs[day.weekday()]
+        day += timedelta(days=1)
+    return round(proj, 1)
+
+
 def week_range(iso_date):
     """Mon–Sun week containing the date. Returns (start_iso, end_iso, label)."""
     d = datetime.strptime(iso_date, "%Y-%m-%d").date()

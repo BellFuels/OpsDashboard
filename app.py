@@ -87,12 +87,15 @@ with tab_qv:
     week_rolled = data.rolled_history[(data.rolled_history["date"] >= wk_start) & (data.rolled_history["date"] <= wk_end)]
     month_rolled = data.rolled_history[(data.rolled_history["date"] >= mo_start) & (data.rolled_history["date"] <= mo_end)]
 
-    c1, c2, c3, c4, c5 = st.columns(5)
+    c1, c2, c3, c4, c5, c6 = st.columns(6)
     c1.metric("Total gallons (day)", f"{day_rolled['gallons'].sum():,.1f}")
     c2.metric(f"Shift 1 · punch-in before {data.shift_split_time}", f"{s1:,.1f}")
     c3.metric(f"Shift 2 · punch-in from {data.shift_split_time}", f"{s2:,.1f}")
     c4.metric(f"Week · {wk_label}", f"{week_rolled['gallons'].sum():,.1f}")
     c5.metric(f"Month · {mo_label}", f"{month_rolled['gallons'].sum():,.1f}")
+    c6.metric(f"Projected · {mo_label}", f"{calc.projected_month_gallons(data.rolled_history, qd):,.1f}",
+              help="Actual gallons through the selected date, plus day-of-week averages "
+                   "(last 6 weeks, no-delivery days count as zero) for the rest of the month.")
     if no_time_n:
         st.caption(f"⚠ {no_time_n} stop(s) with no punch data and no arrival time "
                    f"({no_time_gal:,.1f} gal) counted into Shift 1.")
