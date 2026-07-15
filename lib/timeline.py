@@ -122,18 +122,13 @@ def build_timeline(data, iso_date):
         fig.add_trace(go.Bar(y=ys, x=xs, base=bases, orientation="h", width=0.45,
                              marker_color=COLORS[kind], name=label,
                              hovertemplate="%{customdata}<extra></extra>", customdata=texts))
-    # travel-time labels in the gaps between stops
-    gx, gy, gtext = [], [], []
+    # travel-time labels in the gaps between stops (annotations survive
+    # st.plotly_chart theming, unlike text-mode scatter traces)
     for d in drivers:
         for mid, gap in d["gaps"]:
-            gx.append(dt(mid))
-            gy.append(d["name"])
-            gtext.append(fmt_hmm(gap))
-    if gx:
-        fig.add_trace(go.Scatter(x=gx, y=gy, mode="text", text=gtext,
-                                 textfont=dict(size=10, color="#4a5f53"),
-                                 hovertemplate="Travel time: %{text}<extra></extra>",
-                                 showlegend=False))
+            fig.add_annotation(x=dt(mid), y=d["name"], text=fmt_hmm(gap),
+                               showarrow=False,
+                               font=dict(size=10, color="#4a5f53"))
     fig.update_layout(
         barmode="overlay", height=110 + 52 * len(drivers),
         yaxis=dict(categoryorder="array", categoryarray=list(reversed(names)), title=None),
