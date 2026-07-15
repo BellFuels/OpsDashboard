@@ -117,7 +117,8 @@ with tab_qv:
 
     st.markdown("##### Shift timeline")
     st.caption("Shift spans from payroll punches; stops from delivery history. "
-               "Punch data arrives with the unified file. DVIR shown as fixed 15-minute blocks.")
+               "Punch data arrives with the unified file. DVIR (40 min/shift) is "
+               "accounted in the summary table but not drawn on the timeline.")
     drivers_tl, fig, summary = build_timeline(data, qd)
     if fig is None:
         pay_dates = sorted(data.payroll["date"].unique())

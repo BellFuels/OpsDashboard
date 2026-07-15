@@ -17,10 +17,9 @@ COLORS = {
     "delivery": "#1d9e50",
     "fleet": "#8e44ad",
     "terminal": "#d4ac0d",
-    "dvir": "#e67e22",
-    "yard": "#7d97a5",
+    "yard": "#ff3b30",
 }
-DVIR_MINS = 15
+DVIR_MINS = 20  # per pre/post-trip block; accounted in the summary, not drawn
 
 
 def fmt_clock(mins):
@@ -107,8 +106,6 @@ def build_timeline(data, iso_date):
         if yard:
             segs.append((b2y_m, yard, "yard",
                          f"<b>Back at yard</b><br>{b2y} → {p['clock_out']} · {fmt_hmm(yard)}"))
-        segs.append((in_m, DVIR_MINS, "dvir", f"Pre-Trip DVIR · {fmt_hmm(DVIR_MINS)}"))
-        segs.append((out_m - DVIR_MINS, DVIR_MINS, "dvir", f"Post-Trip DVIR · {fmt_hmm(DVIR_MINS)}"))
         shift = out_m - in_m
         dvir = DVIR_MINS * 2
         # yard time overlaps the post-trip DVIR block; don't double-count it
@@ -134,7 +131,7 @@ def build_timeline(data, iso_date):
         customdata=[f"{d['clock_in']} – {d['clock_out']}" for d in drivers],
     ))
     for kind, label in [("yard", "Yard"), ("delivery", "Delivery Stop"), ("fleet", "Fleet Fuel"),
-                        ("terminal", "Terminal Load"), ("dvir", "DVIR")]:
+                        ("terminal", "Terminal Load")]:
         ys, xs, bases, texts = [], [], [], []
         for d in drivers:
             for start, dur, k, txt in d["segments"]:
