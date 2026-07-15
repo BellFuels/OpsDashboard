@@ -18,6 +18,7 @@ COLORS = {
     "fleet": "#8e44ad",
     "terminal": "#d4ac0d",
     "dvir": "#e67e22",
+    "yard": "#7d97a5",
 }
 DVIR_MINS = 15
 
@@ -84,28 +85,34 @@ def build_timeline(data, iso_date):
             segs.append((start, max(dur, 2), kind,
                          f"<b>{r['stop']}</b><br>{r['gallons']:g} gal · "
                          f"{fmt_clock(start)} → {fmt_clock(start + dur)}"))
+        b2y = p.get("back_to_yard", "")
+        b2y_m = to_abs_mins(b2y, in_m)
+        yard = out_m - b2y_m if b2y_m is not None and in_m <= b2y_m <= out_m else None
         # travel-time gaps (≥30 min): from end of pre-trip DVIR, between stops,
-        # to start of post-trip DVIR. Tracks the furthest end seen so far so
-        # overlapping/nested stops don't hide or misplace a gap.
+        # to the return to the yard (or post-trip DVIR if no return entered).
+        # Tracks the furthest end seen so far so overlapping/nested stops
+        # don't hide or misplace a gap.
         gaps = []
         if segs:
             cur_end = in_m + DVIR_MINS
+            shift_end = b2y_m if yard is not None else out_m - DVIR_MINS
             for s in sorted(segs, key=lambda x: x[0]):
                 gap = s[0] - cur_end
                 if gap >= 30:
                     gaps.append((cur_end + gap / 2, gap))
                 cur_end = max(cur_end, s[0] + s[1])
-            gap = (out_m - DVIR_MINS) - cur_end
+            gap = shift_end - cur_end
             if gap >= 30:
                 gaps.append((cur_end + gap / 2, gap))
+        if yard:
+            segs.append((b2y_m, yard, "yard",
+                         f"<b>Back at yard</b><br>{b2y} → {p['clock_out']} · {fmt_hmm(yard)}"))
         segs.append((in_m, DVIR_MINS, "dvir", f"Pre-Trip DVIR · {fmt_hmm(DVIR_MINS)}"))
         segs.append((out_m - DVIR_MINS, DVIR_MINS, "dvir", f"Post-Trip DVIR · {fmt_hmm(DVIR_MINS)}"))
         shift = out_m - in_m
         dvir = DVIR_MINS * 2
-        unacc = max(0, shift - stop_time - dvir)
-        b2y = p.get("back_to_yard", "")
-        b2y_m = to_abs_mins(b2y, in_m)
-        yard = out_m - b2y_m if b2y_m is not None and in_m <= b2y_m <= out_m else None
+        # yard time overlaps the post-trip DVIR block; don't double-count it
+        unacc = max(0, shift - stop_time - dvir - max(0, (yard or 0) - DVIR_MINS))
         drivers.append({"name": name, "in_m": in_m, "out_m": out_m, "clock_in": p["clock_in"],
                         "clock_out": p["clock_out"], "segments": segs, "gaps": gaps, "shift": shift,
                         "stop_time": stop_time, "dvir": dvir, "unaccounted": unacc,
@@ -126,7 +133,7 @@ def build_timeline(data, iso_date):
         name="Shift", hovertemplate="%{y}: %{customdata}<extra></extra>",
         customdata=[f"{d['clock_in']} – {d['clock_out']}" for d in drivers],
     ))
-    for kind, label in [("delivery", "Delivery Stop"), ("fleet", "Fleet Fuel"),
+    for kind, label in [("yard", "Yard"), ("delivery", "Delivery Stop"), ("fleet", "Fleet Fuel"),
                         ("terminal", "Terminal Load"), ("dvir", "DVIR")]:
         ys, xs, bases, texts = [], [], [], []
         for d in drivers:
