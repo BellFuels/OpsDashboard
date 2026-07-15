@@ -80,7 +80,7 @@ def build_timeline(data, iso_date):
         gaps = []
         for a, b in zip(stops_sorted, stops_sorted[1:]):
             gap = b[0] - (a[0] + a[1])
-            if gap >= 2:
+            if gap >= 30:
                 gaps.append((a[0] + a[1] + gap / 2, gap))
         segs.append((in_m, DVIR_MINS, "dvir", f"Pre-Trip DVIR · {fmt_hmm(DVIR_MINS)}"))
         segs.append((out_m - DVIR_MINS, DVIR_MINS, "dvir", f"Post-Trip DVIR · {fmt_hmm(DVIR_MINS)}"))
