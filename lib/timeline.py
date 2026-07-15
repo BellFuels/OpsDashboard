@@ -103,9 +103,13 @@ def build_timeline(data, iso_date):
         shift = out_m - in_m
         dvir = DVIR_MINS * 2
         unacc = max(0, shift - stop_time - dvir)
+        b2y = p.get("back_to_yard", "")
+        b2y_m = to_abs_mins(b2y, in_m)
+        yard = out_m - b2y_m if b2y_m is not None and in_m <= b2y_m <= out_m else None
         drivers.append({"name": name, "in_m": in_m, "out_m": out_m, "clock_in": p["clock_in"],
                         "clock_out": p["clock_out"], "segments": segs, "gaps": gaps, "shift": shift,
                         "stop_time": stop_time, "dvir": dvir, "unaccounted": unacc,
+                        "back_to_yard": b2y, "yard_time": yard,
                         "stop_pct": round(stop_time / shift * 100, 1) if shift > 0 else None})
     if not drivers:
         return None, None, None
@@ -161,6 +165,8 @@ def build_timeline(data, iso_date):
         "Driver": d["name"], "Punches": f"{d['clock_in']} – {d['clock_out']}",
         "Shift": fmt_hmm(d["shift"]), "Stop Time": fmt_hmm(d["stop_time"]),
         "DVIR": fmt_hmm(d["dvir"]), "Unaccounted": fmt_hmm(d["unaccounted"]),
+        "Back to Yard": d["back_to_yard"] or "—",
+        "Yard Time": fmt_hmm(d["yard_time"]) if d["yard_time"] is not None else "—",
         "Stop %": f"{d['stop_pct']}%" if d["stop_pct"] is not None else "—",
     } for d in drivers])
     return drivers, fig, summary

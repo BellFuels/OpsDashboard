@@ -9,7 +9,7 @@ disk: load_unified() takes raw bytes and returns DataFrames.
 import io
 import re
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime, time as dt_time, timedelta
 
 import openpyxl
 import pandas as pd
@@ -24,7 +24,7 @@ ALL_SERVICE_TYPES = ["FLEET", "GEN", "TANK", "TANK/SHOW", "GRVTY", "GRVTY/PUMP"]
 DELIVERY_COLUMNS = ["Date", "Driver", "Stop", "SO", "Product", "Gallons", "StopMins",
                     "Units", "Address", "FleetType", "CustType", "GPM",
                     "Arrival", "Departure", "IsFleet", "IsTerminal"]
-PAYROLL_COLUMNS = ["Date", "Driver", "Hours", "ClockIn", "ClockOut"]
+PAYROLL_COLUMNS = ["Date", "Driver", "Hours", "ClockIn", "ClockOut", "BackToYard"]
 PUNCH_COLUMNS = ["Date", "Driver", "Seq", "In", "Out"]
 CUSTOMER_COLUMNS = ["Name", "Account", "CustType", "SvcType", "Street", "City", "County", "FullAddress"]
 
@@ -205,6 +205,30 @@ def _sheet_lists(wb, name):
     return rows
 
 
+def clock_str(v):
+    """Manual time cell -> 'H:MM AM/PM' text. Excel stores typed times as real
+    time values (the file may be uploaded before a build normalizes them), so
+    accept datetimes, times, day-fractions, and 12/24-hour text."""
+    if v is None:
+        return ""
+    if isinstance(v, datetime):
+        v = v.time()
+    if isinstance(v, dt_time):
+        return f"{v.hour % 12 or 12}:{v.minute:02d} {'AM' if v.hour < 12 else 'PM'}"
+    if isinstance(v, (int, float)) and 0 <= v < 1:
+        mins = int(round(v * 1440)) % 1440
+        h, mm = divmod(mins, 60)
+        return f"{h % 12 or 12}:{mm:02d} {'AM' if h < 12 else 'PM'}"
+    s = str(v).strip()
+    m = re.match(r"^(\d{1,2}):(\d{2})(?::\d{2})?\s*(AM|PM)?$", s, re.I)
+    if not m:
+        return s
+    h, mm, ap = int(m.group(1)), int(m.group(2)), m.group(3)
+    if ap:
+        h = h % 12 + (12 if ap.upper() == "PM" else 0)
+    return f"{h % 12 or 12}:{mm:02d} {'AM' if h % 24 < 12 else 'PM'}"
+
+
 def load_unified(file_bytes: bytes) -> UnifiedData:
     """Parse the unified workbook from raw bytes. Never touches disk."""
     try:
@@ -259,8 +283,10 @@ def load_unified(file_bytes: bytes) -> UnifiedData:
             if not date or not cell_str(col(1)) or hours is None:
                 continue
             prows.append({"date": date, "driver": cell_str(col(1)), "hours": hours,
-                          "clock_in": cell_str(col(3)), "clock_out": cell_str(col(4))})
-        payroll = pd.DataFrame(prows, columns=["date", "driver", "hours", "clock_in", "clock_out"])
+                          "clock_in": cell_str(col(3)), "clock_out": cell_str(col(4)),
+                          "back_to_yard": clock_str(col(5))})
+        payroll = pd.DataFrame(prows, columns=["date", "driver", "hours", "clock_in",
+                                               "clock_out", "back_to_yard"])
 
         # Punches
         purows = []

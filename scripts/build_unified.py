@@ -23,7 +23,7 @@ import os
 import re
 import shutil
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, time as dt_time, timedelta, timezone
 
 import openpyxl
 import xlrd
@@ -55,7 +55,7 @@ DEFAULT_NAME_MAP = {
 DELIVERY_COLUMNS = ["Date", "Driver", "Stop", "SO", "Product", "Gallons", "StopMins",
                     "Units", "Address", "FleetType", "CustType", "GPM",
                     "Arrival", "Departure", "IsFleet", "IsTerminal"]
-PAYROLL_COLUMNS = ["Date", "Driver", "Hours", "ClockIn", "ClockOut"]
+PAYROLL_COLUMNS = ["Date", "Driver", "Hours", "ClockIn", "ClockOut", "BackToYard"]
 PUNCH_COLUMNS = ["Date", "Driver", "Seq", "In", "Out"]
 CUSTOMER_COLUMNS = ["Name", "Account", "CustType", "SvcType", "Street", "City", "County", "FullAddress"]
 
@@ -119,6 +119,35 @@ def parse_hmm(v):
     except ValueError:
         pass
     return None
+
+
+def clock_text(v):
+    """Manually entered time cell -> 'H:MM AM/PM' text. Excel turns typed times
+    into real time values, so accept datetimes, times, day-fractions, serials,
+    and text ('6:45 PM', or 24-hour '18:45'). Unrecognized text passes through."""
+    if v is None:
+        return ""
+    if isinstance(v, datetime):
+        v = v.time()
+    if isinstance(v, dt_time):
+        return f"{v.hour % 12 or 12}:{v.minute:02d} {'AM' if v.hour < 12 else 'PM'}"
+    if isinstance(v, (int, float)):
+        if 0 <= v < 1:
+            mins = int(round(v * 1440)) % 1440
+            h, mm = divmod(mins, 60)
+            return f"{h % 12 or 12}:{mm:02d} {'AM' if h < 12 else 'PM'}"
+        try:
+            return clock_text(serial_to_datetime(float(v)))
+        except (OverflowError, ValueError):
+            return ""
+    s = str(v).strip()
+    m = re.match(r"^(\d{1,2}):(\d{2})(?::\d{2})?\s*(AM|PM)?$", s, re.I)
+    if not m:
+        return s
+    h, mm, ap = int(m.group(1)), int(m.group(2)), m.group(3)
+    if ap:
+        h = h % 12 + (12 if ap.upper() == "PM" else 0)
+    return f"{h % 12 or 12}:{mm:02d} {'AM' if h % 24 < 12 else 'PM'}"
 
 
 def extract_date_iso(v):
@@ -714,6 +743,8 @@ def read_unified(path):
                 v = raw[j] if j < len(raw) else None
                 if col in ("Date",):
                     row[col] = extract_date_iso(v)
+                elif col == "BackToYard":
+                    row[col] = clock_text(v)
                 elif col in ("Arrival", "Departure"):
                     row[col] = arrival_to_text(v)
                 elif col in ("Gallons", "GPM", "Hours"):
@@ -1008,7 +1039,14 @@ def main():
             for i, p in enumerate(e["punches"]):
                 new_punches.append({"Date": date, "Driver": e["driver"], "Seq": i + 1,
                                     "In": p["in"] or "", "Out": p["out"] or ""})
+        # re-dropping a date's payroll PDF must not wipe manually entered
+        # BackToYard times — carry them over by (date, driver)
+        b2y = {(r["Date"], r["Driver"]): r["BackToYard"]
+               for r in data["payroll"] if r.get("BackToYard")}
         data["payroll"] = replace_by_date(data["payroll"], new_payroll, {date})
+        for r in data["payroll"]:
+            if not r.get("BackToYard"):
+                r["BackToYard"] = b2y.get((r["Date"], r["Driver"]), "")
         data["punches"] = replace_by_date(data["punches"], new_punches, {date})
         print(f"\nPayroll {date}: {len(new_payroll)} drivers, {len(new_punches)} punch rows "
               f"({os.path.basename(f)})")
