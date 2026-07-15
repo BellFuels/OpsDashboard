@@ -95,8 +95,9 @@ def build_timeline(data, iso_date):
         downtime = None
         if ds_m is not None and de_m is not None and in_m <= ds_m < de_m <= out_m:
             downtime = de_m - ds_m
+            note = str(p.get("downtime_note", "") or "").strip()
             segs.append((ds_m, downtime, "downtime",
-                         f"<b>Downtime</b><br>{ds} → {de} · {fmt_hmm(downtime)}"))
+                         f"<b>{note or 'Downtime'}</b><br>{ds} → {de} · {fmt_hmm(downtime)}"))
         # travel-time gaps (≥30 min): from end of pre-trip DVIR, between stops,
         # to the return to the yard (or post-trip DVIR if no return entered).
         # Tracks the furthest end seen so far so overlapping/nested stops

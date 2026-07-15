@@ -130,11 +130,11 @@ def yard_downtime_totals(pay_rows):
 
 
 def week_range(iso_date):
-    """Sun–Sat week containing the date. Returns (start_iso, end_iso, label)."""
+    """Mon–Sun week containing the date. Returns (start_iso, end_iso, label)."""
     d = datetime.strptime(iso_date, "%Y-%m-%d").date()
-    sun = d - timedelta(days=(d.weekday() + 1) % 7)
-    sat = sun + timedelta(days=6)
-    return sun.isoformat(), sat.isoformat(), f"{sun.month}/{sun.day} – {sat.month}/{sat.day} ({sun.year})"
+    mon = d - timedelta(days=d.weekday())
+    sun = mon + timedelta(days=6)
+    return mon.isoformat(), sun.isoformat(), f"{mon.month}/{mon.day} – {sun.month}/{sun.day} ({mon.year})"
 
 
 def month_range(iso_date):

@@ -25,7 +25,7 @@ DELIVERY_COLUMNS = ["Date", "Driver", "Stop", "SO", "Product", "Gallons", "StopM
                     "Units", "Address", "FleetType", "CustType", "GPM",
                     "Arrival", "Departure", "IsFleet", "IsTerminal"]
 PAYROLL_COLUMNS = ["Date", "Driver", "Hours", "ClockIn", "ClockOut",
-                   "BackToYard", "DowntimeStart", "DowntimeEnd"]
+                   "BackToYard", "DowntimeStart", "DowntimeEnd", "DowntimeNote"]
 PUNCH_COLUMNS = ["Date", "Driver", "Seq", "In", "Out"]
 CUSTOMER_COLUMNS = ["Name", "Account", "CustType", "SvcType", "Street", "City", "County", "FullAddress"]
 
@@ -287,10 +287,12 @@ def load_unified(file_bytes: bytes) -> UnifiedData:
                           "clock_in": cell_str(col(3)), "clock_out": cell_str(col(4)),
                           "back_to_yard": clock_str(col(5)),
                           "downtime_start": clock_str(col(6)),
-                          "downtime_end": clock_str(col(7))})
+                          "downtime_end": clock_str(col(7)),
+                          "downtime_note": cell_str(col(8))})
         payroll = pd.DataFrame(prows, columns=["date", "driver", "hours", "clock_in",
                                                "clock_out", "back_to_yard",
-                                               "downtime_start", "downtime_end"])
+                                               "downtime_start", "downtime_end",
+                                               "downtime_note"])
 
         # Punches
         purows = []

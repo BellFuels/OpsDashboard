@@ -56,9 +56,10 @@ DELIVERY_COLUMNS = ["Date", "Driver", "Stop", "SO", "Product", "Gallons", "StopM
                     "Units", "Address", "FleetType", "CustType", "GPM",
                     "Arrival", "Departure", "IsFleet", "IsTerminal"]
 PAYROLL_COLUMNS = ["Date", "Driver", "Hours", "ClockIn", "ClockOut",
-                   "BackToYard", "DowntimeStart", "DowntimeEnd"]
+                   "BackToYard", "DowntimeStart", "DowntimeEnd", "DowntimeNote"]
 # manually entered in Excel; preserved when a date's payroll PDF is re-dropped
-MANUAL_PAYROLL_COLUMNS = ("BackToYard", "DowntimeStart", "DowntimeEnd")
+MANUAL_TIME_COLUMNS = ("BackToYard", "DowntimeStart", "DowntimeEnd")
+MANUAL_PAYROLL_COLUMNS = MANUAL_TIME_COLUMNS + ("DowntimeNote",)
 PUNCH_COLUMNS = ["Date", "Driver", "Seq", "In", "Out"]
 CUSTOMER_COLUMNS = ["Name", "Account", "CustType", "SvcType", "Street", "City", "County", "FullAddress"]
 
@@ -746,7 +747,7 @@ def read_unified(path):
                 v = raw[j] if j < len(raw) else None
                 if col in ("Date",):
                     row[col] = extract_date_iso(v)
-                elif col in MANUAL_PAYROLL_COLUMNS:
+                elif col in MANUAL_TIME_COLUMNS:
                     row[col] = clock_text(v)
                 elif col in ("Arrival", "Departure"):
                     row[col] = arrival_to_text(v)
