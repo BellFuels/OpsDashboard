@@ -585,11 +585,11 @@ def enrich_deliveries(records, customers):
             match_cache[stop] = next((c for n, c in normed if fuzzy_name_match_normed(n, stop_norm)), None)
         ci = match_cache[stop]
         if not ci:
-            r["FleetType"] = ""
+            # no list match: keep any existing (manually entered) type
             if not (r["IsFleet"] or r["IsTerminal"]):
                 unmatched_stops.add(stop)
             continue
-        r["FleetType"] = ci["SvcType"] or ""
+        r["FleetType"] = ci["SvcType"] or r["FleetType"]
         r["CustType"] = ci["CustType"] or r["CustType"]
         full_addr = ci["FullAddress"]
         if not r["Address"] and full_addr:
@@ -597,6 +597,37 @@ def enrich_deliveries(records, customers):
         elif r["Address"] and full_addr:
             r["Address"] = append_city_state(r["Address"], full_addr)
     return unmatched_stops
+
+
+def heal_missing_types(deliveries):
+    """Self-heal blank FleetType/CustType from past deliveries of the same
+    stop: exact (stop, address) match first, then stop name alone if every
+    typed row for that stop agrees. Manual type entries in the unified file
+    thus propagate to new/blank rows on every build. Returns rows healed."""
+    def norm(s):
+        return re.sub(r"\s+", " ", str(s or "").strip().lower())
+
+    known = {}   # (field, key) -> set of non-blank values
+    for r in deliveries:
+        for field in ("FleetType", "CustType"):
+            v = (r.get(field) or "").strip()
+            if not v:
+                continue
+            known.setdefault((field, ("sa", norm(r["Stop"]), norm(r["Address"]))), set()).add(v)
+            known.setdefault((field, ("s", norm(r["Stop"]))), set()).add(v)
+    healed = 0
+    for r in deliveries:
+        hit = False
+        for field in ("FleetType", "CustType"):
+            if (r.get(field) or "").strip():
+                continue
+            vals = known.get((field, ("sa", norm(r["Stop"]), norm(r["Address"])))) \
+                or known.get((field, ("s", norm(r["Stop"]))))
+            if vals and len(vals) == 1:
+                r[field] = next(iter(vals))
+                hit = True
+        healed += hit
+    return healed
 
 
 def parse_payroll_pdf(path, name_map):
@@ -1019,6 +1050,12 @@ def main():
             unmatched_stops = enrich_deliveries(targets, data["customers"])
             print(f"\nEnrichment: {len(targets)} rows checked against customer list; "
                   f"{len(unmatched_stops)} stop name(s) with no match")
+
+    # ── self-heal missing types from past deliveries of the same stop ──
+    healed = heal_missing_types(data["deliveries"])
+    if healed:
+        print(f"Type self-heal: filled missing FleetType/CustType on {healed} row(s) "
+              f"from past deliveries of the same stop")
 
     # ── payroll ──
     unmapped_names = set()
