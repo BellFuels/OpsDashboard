@@ -22,6 +22,14 @@ COLORS = {
 DVIR_MINS = 15
 
 
+def fmt_clock(mins):
+    """Minutes since midnight (may exceed 24h) -> 'H:MM AM/PM'."""
+    m = int(round(mins)) % 1440
+    h, mm = divmod(m, 60)
+    ap = "AM" if h < 12 else "PM"
+    return f"{h % 12 or 12}:{mm:02d} {ap}"
+
+
 def to_abs_mins(t, ref):
     """Port of tlToAbsMins: 'H:MM AM/PM' -> minutes since midnight; if more than
     6h before ref, assume next day (+24h)."""
@@ -74,7 +82,8 @@ def build_timeline(data, iso_date):
             if kind == "delivery":
                 stop_time += dur
             segs.append((start, max(dur, 2), kind,
-                         f"<b>{r['stop']}</b><br>{r['gallons']:g} gal · {fmt_hmm(dur)}"))
+                         f"<b>{r['stop']}</b><br>{r['gallons']:g} gal · "
+                         f"{fmt_clock(start)} → {fmt_clock(start + dur)}"))
         # travel time between consecutive physical stops (before DVIR blocks are added)
         stops_sorted = sorted(segs, key=lambda s: s[0])
         gaps = []
