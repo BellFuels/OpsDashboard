@@ -412,6 +412,7 @@ def process_daily(eff_rows, trans_rows):
     t_prod = find_col(t_sample, ["Product", "ProductCode", "Product Code"])
     t_addr = find_col(t_sample, ["Address 1", "Address1", "Address", "Delivery Address"])
     t_name = find_col(t_sample, ["Name", "Customer Name", "Customer", "Ship To Name", "Ship-To Name"])
+    t_assign = find_col(t_sample, ["Assgn Date", "AssgnDate", "Assign Date", "Assigned Date"])
     if not t_order:
         raise ValueError(f"Transact View missing Order No. column. Found: {list(t_sample)[:10]}")
 
@@ -425,6 +426,7 @@ def process_daily(eff_rows, trans_rows):
             "product": cell_str(r.get(t_prod)),
             "address": cell_str(r.get(t_addr)),
             "tName": cell_str(r.get(t_name)) if t_name else "",
+            "assignDate": extract_date_iso(r.get(t_assign)) if t_assign else "",
         }
         trans_lookup.setdefault(order_no, []).append(entry)
     trans_lookup_norm = {}
@@ -475,6 +477,10 @@ def process_daily(eff_rows, trans_rows):
         address, product = "", ""
         so_norm = re.sub(r"^SO", "", so, flags=re.I).lstrip("0") or "0"
         te = trans_lookup.get(so) or trans_lookup_norm.get(so_norm) or []
+        # Transact's Assgn Date is the shift the order belongs to; the arrival
+        # date would push a night shift's after-midnight stops to the next day.
+        # Only trusted from an SO match — fuzzy name matches may cross dates.
+        assign_date = te[0]["assignDate"] if te else ""
         if len(te) == 1:
             address, product = te[0]["address"], te[0]["product"]
         elif len(te) > 1:
@@ -501,7 +507,7 @@ def process_daily(eff_rows, trans_rows):
 
         gpm = round(gallons / stop_mins, 2) if stop_mins and stop_mins > 0 else None
         records.append({
-            "Date": extract_date_iso(raw_arr),
+            "Date": assign_date or extract_date_iso(raw_arr),
             "Driver": driver, "Stop": stop, "SO": so, "Product": product,
             "Gallons": gallons, "StopMins": stop_mins, "Units": units,
             "Address": address, "FleetType": "", "CustType": "",
