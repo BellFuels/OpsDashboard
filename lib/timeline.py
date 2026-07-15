@@ -10,6 +10,8 @@ from datetime import datetime, timedelta
 import pandas as pd
 import plotly.graph_objects as go
 
+from lib.parsing import fmt_hmm
+
 COLORS = {
     "shift": "rgba(39,160,94,0.15)",
     "delivery": "#1d9e50",
@@ -71,14 +73,22 @@ def build_timeline(data, iso_date):
             kind = "fleet" if r["is_fleet"] else "terminal" if r["is_terminal"] else "delivery"
             if kind == "delivery":
                 stop_time += dur
-            segs.append((start, max(dur, 2), kind, f"{r['stop']} · {r['gallons']:g} gal"))
-        segs.append((in_m, DVIR_MINS, "dvir", "Pre-Trip DVIR"))
-        segs.append((out_m - DVIR_MINS, DVIR_MINS, "dvir", "Post-Trip DVIR"))
+            segs.append((start, max(dur, 2), kind,
+                         f"<b>{r['stop']}</b><br>{r['gallons']:g} gal · {fmt_hmm(dur)}"))
+        # travel time between consecutive physical stops (before DVIR blocks are added)
+        stops_sorted = sorted(segs, key=lambda s: s[0])
+        gaps = []
+        for a, b in zip(stops_sorted, stops_sorted[1:]):
+            gap = b[0] - (a[0] + a[1])
+            if gap >= 2:
+                gaps.append((a[0] + a[1] + gap / 2, gap))
+        segs.append((in_m, DVIR_MINS, "dvir", f"Pre-Trip DVIR · {fmt_hmm(DVIR_MINS)}"))
+        segs.append((out_m - DVIR_MINS, DVIR_MINS, "dvir", f"Post-Trip DVIR · {fmt_hmm(DVIR_MINS)}"))
         shift = out_m - in_m
         dvir = DVIR_MINS * 2
         unacc = max(0, shift - stop_time - dvir)
         drivers.append({"name": name, "in_m": in_m, "out_m": out_m, "clock_in": p["clock_in"],
-                        "clock_out": p["clock_out"], "segments": segs, "shift": shift,
+                        "clock_out": p["clock_out"], "segments": segs, "gaps": gaps, "shift": shift,
                         "stop_time": stop_time, "dvir": dvir, "unaccounted": unacc,
                         "stop_pct": round(stop_time / shift * 100, 1) if shift > 0 else None})
     if not drivers:
@@ -106,13 +116,24 @@ def build_timeline(data, iso_date):
                 ys.append(d["name"])
                 xs.append(timedelta(minutes=dur).total_seconds() * 1000)
                 bases.append(dt(start))
-                end = dt(start + dur)
-                texts.append(f"{txt}<br>{dt(start):%-I:%M %p} → {end:%-I:%M %p}")
+                texts.append(txt)
         if not ys:
             continue
         fig.add_trace(go.Bar(y=ys, x=xs, base=bases, orientation="h", width=0.45,
                              marker_color=COLORS[kind], name=label,
                              hovertemplate="%{customdata}<extra></extra>", customdata=texts))
+    # travel-time labels in the gaps between stops
+    gx, gy, gtext = [], [], []
+    for d in drivers:
+        for mid, gap in d["gaps"]:
+            gx.append(dt(mid))
+            gy.append(d["name"])
+            gtext.append(fmt_hmm(gap))
+    if gx:
+        fig.add_trace(go.Scatter(x=gx, y=gy, mode="text", text=gtext,
+                                 textfont=dict(size=10, color="#4a5f53"),
+                                 hovertemplate="Travel time: %{text}<extra></extra>",
+                                 showlegend=False))
     fig.update_layout(
         barmode="overlay", height=110 + 52 * len(drivers),
         yaxis=dict(categoryorder="array", categoryarray=list(reversed(names)), title=None),
@@ -120,9 +141,11 @@ def build_timeline(data, iso_date):
         plot_bgcolor="white", paper_bgcolor="rgba(0,0,0,0)",
         legend=dict(orientation="h", yanchor="top", y=-0.08),
         margin=dict(l=10, r=10, t=10, b=10), bargap=0.25,
+        hoverdistance=40,
+        hoverlabel=dict(font_size=15, bgcolor="white", bordercolor="#27a05e",
+                        font=dict(color="#1a2b21"), align="left"),
     )
 
-    from lib.parsing import fmt_hmm
     summary = pd.DataFrame([{
         "Driver": d["name"], "Punches": f"{d['clock_in']} – {d['clock_out']}",
         "Shift": fmt_hmm(d["shift"]), "Stop Time": fmt_hmm(d["stop_time"]),

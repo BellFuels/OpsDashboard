@@ -129,15 +129,13 @@ with tab_qv:
 # ─── Daily Route Performance ─────────────────────────────────────────────────
 
 with tab_daily:
-    f1, f2, f3, f4 = st.columns([1.2, 2, 1.5, 1.5])
+    f1, f2, f3 = st.columns([1.2, 2.5, 2])
     rd = f1.selectbox("Date", list(reversed(dates)), format_func=iso_to_mdy, key="report_date")
     day_rolled = data.rolled_history[data.rolled_history["date"] == rd]
     all_drivers = sorted(d for d in day_rolled["driver"].unique() if d)
     sel_drivers = f2.multiselect("Drivers", all_drivers, default=all_drivers)
     all_ft = sorted(t for t in day_rolled["fleet_type"].unique() if t)
     sel_ft = f3.multiselect("Service type", all_ft, default=all_ft)
-    all_ct = sorted(t for t in day_rolled["cust_type"].unique() if t)
-    sel_ct = f4.multiselect("Customer type", all_ct, default=all_ct)
     g1, g2, g3 = st.columns([2, 1, 2])
     search = g1.text_input("Search stop / address", "")
     outliers_only = g2.toggle("Outliers only")
@@ -163,8 +161,6 @@ with tab_daily:
         df = df[df["driver"].isin(sel_drivers)]
     if sel_ft != all_ft:
         df = df[(df["fleet_type"] == "") | df["fleet_type"].isin(sel_ft)]
-    if sel_ct != all_ct:
-        df = df[(df["cust_type"] == "") | df["cust_type"].isin(sel_ct)]
     if search.strip():
         q = search.strip().lower()
         df = df[df["stop"].str.lower().str.contains(q, regex=False)
