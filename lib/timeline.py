@@ -18,6 +18,7 @@ COLORS = {
     "fleet": "#8e44ad",
     "terminal": "#d4ac0d",
     "yard": "#ff3b30",
+    "downtime": "#1e88e5",
 }
 DVIR_MINS = 20  # per pre/post-trip block; accounted in the summary, not drawn
 
@@ -87,6 +88,15 @@ def build_timeline(data, iso_date):
         b2y = p.get("back_to_yard", "")
         b2y_m = to_abs_mins(b2y, in_m)
         yard = out_m - b2y_m if b2y_m is not None and in_m <= b2y_m <= out_m else None
+        # downtime block (manual DowntimeStart/DowntimeEnd, must sit inside the shift)
+        ds, de = p.get("downtime_start", ""), p.get("downtime_end", "")
+        ds_m = to_abs_mins(ds, in_m)
+        de_m = to_abs_mins(de, ds_m if ds_m is not None else in_m)
+        downtime = None
+        if ds_m is not None and de_m is not None and in_m <= ds_m < de_m <= out_m:
+            downtime = de_m - ds_m
+            segs.append((ds_m, downtime, "downtime",
+                         f"<b>Downtime</b><br>{ds} → {de} · {fmt_hmm(downtime)}"))
         # travel-time gaps (≥30 min): from end of pre-trip DVIR, between stops,
         # to the return to the yard (or post-trip DVIR if no return entered).
         # Tracks the furthest end seen so far so overlapping/nested stops
@@ -109,11 +119,12 @@ def build_timeline(data, iso_date):
         shift = out_m - in_m
         dvir = DVIR_MINS * 2
         # yard time overlaps the post-trip DVIR block; don't double-count it
-        unacc = max(0, shift - stop_time - dvir - max(0, (yard or 0) - DVIR_MINS))
+        unacc = max(0, shift - stop_time - dvir - max(0, (yard or 0) - DVIR_MINS)
+                    - (downtime or 0))
         drivers.append({"name": name, "in_m": in_m, "out_m": out_m, "clock_in": p["clock_in"],
                         "clock_out": p["clock_out"], "segments": segs, "gaps": gaps, "shift": shift,
                         "stop_time": stop_time, "dvir": dvir, "unaccounted": unacc,
-                        "back_to_yard": b2y, "yard_time": yard,
+                        "back_to_yard": b2y, "yard_time": yard, "downtime": downtime,
                         "stop_pct": round(stop_time / shift * 100, 1) if shift > 0 else None})
     if not drivers:
         return None, None, None
@@ -130,7 +141,8 @@ def build_timeline(data, iso_date):
         name="Shift", hovertemplate="%{y}: %{customdata}<extra></extra>",
         customdata=[f"{d['clock_in']} – {d['clock_out']}" for d in drivers],
     ))
-    for kind, label in [("yard", "Yard"), ("delivery", "Delivery Stop"), ("fleet", "Fleet Fuel"),
+    for kind, label in [("yard", "Back at Yard Time"), ("downtime", "Downtime"),
+                        ("delivery", "Delivery Stop"), ("fleet", "Fleet Fuel"),
                         ("terminal", "Terminal Load")]:
         ys, xs, bases, texts = [], [], [], []
         for d in drivers:
@@ -171,6 +183,7 @@ def build_timeline(data, iso_date):
         "DVIR": fmt_hmm(d["dvir"]), "Unaccounted": fmt_hmm(d["unaccounted"]),
         "Back to Yard": d["back_to_yard"] or "—",
         "Yard Time": fmt_hmm(d["yard_time"]) if d["yard_time"] is not None else "—",
+        "Downtime": fmt_hmm(d["downtime"]) if d["downtime"] is not None else "—",
         "Stop %": f"{d['stop_pct']}%" if d["stop_pct"] is not None else "—",
     } for d in drivers])
     return drivers, fig, summary

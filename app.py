@@ -97,9 +97,12 @@ with tab_qv:
         st.caption(f"⚠ {no_time_n} stop(s) with no punch data and no arrival time "
                    f"({no_time_gal:,.1f} gal) counted into Shift 1.")
 
-    def metrics_card(col, title, subtitle, rolled):
+    def metrics_card(col, title, subtitle, rolled, pay_rows):
         m = calc.quick_view_service_metrics(rolled)
-        rows = [("Fleet avg Min/Unit", fmt_hhmmss(m["fleet_min_unit"]) if m["fleet_min_unit"] else "—"),
+        yard_tot, down_tot = calc.yard_downtime_totals(pay_rows)
+        rows = [("Back At Yard", fmt_hmm(yard_tot) if yard_tot else "—"),
+                ("Downtime", fmt_hmm(down_tot) if down_tot else "—"),
+                ("Fleet avg Min/Unit", fmt_hhmmss(m["fleet_min_unit"]) if m["fleet_min_unit"] else "—"),
                 ("Fleet avg Gal/Unit", f"{m['fleet_gal_unit']:.2f} gal/unit" if m["fleet_gal_unit"] else "—"),
                 ("Gravity avg Gal/Min", f"{m['grav_gpm']:.3f} gal/min" if m["grav_gpm"] else "—"),
                 ("Generator avg Gal/Min", f"{m['gen_gpm']:.3f} gal/min" if m["gen_gpm"] else "—"),
@@ -110,10 +113,12 @@ with tab_qv:
                          hide_index=True, use_container_width=True)
 
     st.markdown("##### Service-type averages")
+    week_pay = data.payroll[(data.payroll["date"] >= wk_start) & (data.payroll["date"] <= wk_end)]
+    month_pay = data.payroll[(data.payroll["date"] >= mo_start) & (data.payroll["date"] <= mo_end)]
     cc1, cc2, cc3 = st.columns(3)
-    metrics_card(cc1, "Selected day", iso_to_mdy(qd), day_rolled)
-    metrics_card(cc2, "Week", wk_label, week_rolled)
-    metrics_card(cc3, "Month", mo_label, month_rolled)
+    metrics_card(cc1, "Selected day", iso_to_mdy(qd), day_rolled, pay_day)
+    metrics_card(cc2, "Week", wk_label, week_rolled, week_pay)
+    metrics_card(cc3, "Month", mo_label, month_rolled, month_pay)
 
     st.markdown("##### Shift timeline")
     st.caption("Shift spans from payroll punches; stops from delivery history. "

@@ -55,7 +55,10 @@ DEFAULT_NAME_MAP = {
 DELIVERY_COLUMNS = ["Date", "Driver", "Stop", "SO", "Product", "Gallons", "StopMins",
                     "Units", "Address", "FleetType", "CustType", "GPM",
                     "Arrival", "Departure", "IsFleet", "IsTerminal"]
-PAYROLL_COLUMNS = ["Date", "Driver", "Hours", "ClockIn", "ClockOut", "BackToYard"]
+PAYROLL_COLUMNS = ["Date", "Driver", "Hours", "ClockIn", "ClockOut",
+                   "BackToYard", "DowntimeStart", "DowntimeEnd"]
+# manually entered in Excel; preserved when a date's payroll PDF is re-dropped
+MANUAL_PAYROLL_COLUMNS = ("BackToYard", "DowntimeStart", "DowntimeEnd")
 PUNCH_COLUMNS = ["Date", "Driver", "Seq", "In", "Out"]
 CUSTOMER_COLUMNS = ["Name", "Account", "CustType", "SvcType", "Street", "City", "County", "FullAddress"]
 
@@ -743,7 +746,7 @@ def read_unified(path):
                 v = raw[j] if j < len(raw) else None
                 if col in ("Date",):
                     row[col] = extract_date_iso(v)
-                elif col == "BackToYard":
+                elif col in MANUAL_PAYROLL_COLUMNS:
                     row[col] = clock_text(v)
                 elif col in ("Arrival", "Departure"):
                     row[col] = arrival_to_text(v)
@@ -1040,13 +1043,15 @@ def main():
                 new_punches.append({"Date": date, "Driver": e["driver"], "Seq": i + 1,
                                     "In": p["in"] or "", "Out": p["out"] or ""})
         # re-dropping a date's payroll PDF must not wipe manually entered
-        # BackToYard times — carry them over by (date, driver)
-        b2y = {(r["Date"], r["Driver"]): r["BackToYard"]
-               for r in data["payroll"] if r.get("BackToYard")}
+        # times (BackToYard, Downtime*) — carry them over by (date, driver)
+        manual = {(r["Date"], r["Driver"]): {c: r.get(c, "") for c in MANUAL_PAYROLL_COLUMNS}
+                  for r in data["payroll"] if any(r.get(c) for c in MANUAL_PAYROLL_COLUMNS)}
         data["payroll"] = replace_by_date(data["payroll"], new_payroll, {date})
         for r in data["payroll"]:
-            if not r.get("BackToYard"):
-                r["BackToYard"] = b2y.get((r["Date"], r["Driver"]), "")
+            kept = manual.get((r["Date"], r["Driver"]), {})
+            for c in MANUAL_PAYROLL_COLUMNS:
+                if not r.get(c):
+                    r[c] = kept.get(c, "")
         data["punches"] = replace_by_date(data["punches"], new_punches, {date})
         print(f"\nPayroll {date}: {len(new_payroll)} drivers, {len(new_punches)} punch rows "
               f"({os.path.basename(f)})")

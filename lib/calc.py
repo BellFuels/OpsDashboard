@@ -107,6 +107,28 @@ def shift_split_gallons(raw_day, split_hhmm, pay_day=None):
     return round(shift1, 1), round(shift2, 1), round(no_time_gal, 1), no_time_n
 
 
+def yard_downtime_totals(pay_rows):
+    """Total Back-at-Yard minutes and Downtime minutes across payroll rows,
+    validated against each row's punch window (same rules as the timeline)."""
+    from lib.timeline import to_abs_mins
+    yard_tot = down_tot = 0
+    for _, p in pay_rows.iterrows():
+        in_m = to_abs_mins(p["clock_in"], None)
+        if in_m is None:
+            continue
+        out_m = to_abs_mins(p["clock_out"], in_m)
+        if out_m is None:
+            continue
+        b2y_m = to_abs_mins(p.get("back_to_yard", ""), in_m)
+        if b2y_m is not None and in_m <= b2y_m <= out_m:
+            yard_tot += out_m - b2y_m
+        ds_m = to_abs_mins(p.get("downtime_start", ""), in_m)
+        de_m = to_abs_mins(p.get("downtime_end", ""), ds_m if ds_m is not None else in_m)
+        if ds_m is not None and de_m is not None and in_m <= ds_m < de_m <= out_m:
+            down_tot += de_m - ds_m
+    return yard_tot, down_tot
+
+
 def week_range(iso_date):
     """Sun–Sat week containing the date. Returns (start_iso, end_iso, label)."""
     d = datetime.strptime(iso_date, "%Y-%m-%d").date()
