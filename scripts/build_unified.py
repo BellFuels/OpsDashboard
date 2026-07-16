@@ -568,6 +568,7 @@ def process_daily(eff_rows, trans_rows):
     for order_no, entries in trans_lookup.items():
         if order_no in matched_orders or not re.fullmatch(r"\d+", order_no):
             continue
+        seen = set()
         for t in entries:
             if t["grossVol"] <= 0:
                 continue
@@ -576,6 +577,11 @@ def process_daily(eff_rows, trans_rows):
             date = t["assignDate"] or t["delivDate"]
             if not date:
                 continue
+            # overlapping Transact exports repeat an order's rows — append once
+            key = (t["grossVol"], t["delivDate"], cell_str(t["delStart"]))
+            if key in seen:
+                continue
+            seen.add(key)
             stop = t["tName"]
             is_fleet = bool(FLEET_FUEL_FILTER.search(stop))
             is_terminal = (not is_fleet) and bool(TERMINAL_FILTER.search(stop))
