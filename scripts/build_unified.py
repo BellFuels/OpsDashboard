@@ -446,6 +446,10 @@ def process_daily(eff_rows, trans_rows):
     t_addr = find_col(t_sample, ["Address 1", "Address1", "Address", "Delivery Address"])
     t_name = find_col(t_sample, ["Name", "Customer Name", "Customer", "Ship To Name", "Ship-To Name"])
     t_assign = find_col(t_sample, ["Assgn Date", "AssgnDate", "Assign Date", "Assigned Date"])
+    t_status = find_col(t_sample, ["Status"])
+    t_driver = find_col(t_sample, ["Driver Name", "DriverName", "Driver"])
+    t_deliv = find_col(t_sample, ["Deliv Date", "DelivDate", "Delivery Date"])
+    t_start = find_col(t_sample, ["Del Start", "DelStart", "Delivery Start"])
     if not t_order:
         raise ValueError(f"Transact View missing Order No. column. Found: {list(t_sample)[:10]}")
 
@@ -455,11 +459,16 @@ def process_daily(eff_rows, trans_rows):
         if not order_no:
             continue
         entry = {
+            "orderNo": order_no,
             "grossVol": parse_float(r.get(t_vol)) or 0.0,
             "product": cell_str(r.get(t_prod)),
             "address": cell_str(r.get(t_addr)),
             "tName": cell_str(r.get(t_name)) if t_name else "",
             "assignDate": extract_date_iso(r.get(t_assign)) if t_assign else "",
+            "status": cell_str(r.get(t_status)) if t_status else "",
+            "driver": cell_str(r.get(t_driver)) if t_driver else "",
+            "delivDate": extract_date_iso(r.get(t_deliv)) if t_deliv else "",
+            "delStart": r.get(t_start) if t_start else None,
         }
         trans_lookup.setdefault(order_no, []).append(entry)
     trans_lookup_norm = {}
@@ -490,6 +499,7 @@ def process_daily(eff_rows, trans_rows):
         raise ValueError(f"Efficiency Report missing Gallons column. Found: {list(e_sample)[:10]}")
 
     records, skipped_nan = [], 0
+    matched_orders = set()
     fuzzy_cache = {}
     for row in eff_rows:
         stop = cell_str(row.get(e_stop))
@@ -510,6 +520,7 @@ def process_daily(eff_rows, trans_rows):
         address, product = "", ""
         so_norm = re.sub(r"^SO", "", so, flags=re.I).lstrip("0") or "0"
         te = trans_lookup.get(so) or trans_lookup_norm.get(so_norm) or []
+        matched_orders.update(t["orderNo"] for t in te)
         # Transact's Assgn Date is the shift the order belongs to; the arrival
         # date would push a night shift's after-midnight stops to the next day.
         # Only trusted from an SO match — fuzzy name matches may cross dates.
@@ -532,11 +543,13 @@ def process_daily(eff_rows, trans_rows):
             if len(candidates) == 1:
                 address = candidates[0]["address"]
                 product = product or candidates[0]["product"]
+                matched_orders.add(candidates[0]["orderNo"])
             elif len(candidates) > 1:
                 m = next((e for e in candidates if abs(e["grossVol"] - gallons) < 0.5), None)
                 if m:
                     address = m["address"]
                     product = product or m["product"]
+                    matched_orders.add(m["orderNo"])
 
         gpm = round(gallons / stop_mins, 2) if stop_mins and stop_mins > 0 else None
         records.append({
@@ -547,9 +560,36 @@ def process_daily(eff_rows, trans_rows):
             "GPM": gpm, "Arrival": arrival, "Departure": departure,
             "IsFleet": "Y" if is_fleet else "", "IsTerminal": "Y" if is_terminal else "",
         })
+    # Completed orders that never appear on the Efficiency Report (non-routed
+    # bulk/gravity drops, e.g. mobile-fueling customers) would otherwise vanish
+    # from the unified file. Append them from Transact alone; D…/H…-prefixed
+    # order numbers are internal terminal-loading/fleet-fuel rows and stay out.
+    transact_only = 0
+    for order_no, entries in trans_lookup.items():
+        if order_no in matched_orders or not re.fullmatch(r"\d+", order_no):
+            continue
+        for t in entries:
+            if t["grossVol"] <= 0:
+                continue
+            if t["status"] and not t["status"].lower().startswith("comp"):
+                continue
+            date = t["assignDate"] or t["delivDate"]
+            if not date:
+                continue
+            stop = t["tName"]
+            is_fleet = bool(FLEET_FUEL_FILTER.search(stop))
+            is_terminal = (not is_fleet) and bool(TERMINAL_FILTER.search(stop))
+            records.append({
+                "Date": date, "Driver": t["driver"], "Stop": stop, "SO": order_no,
+                "Product": t["product"], "Gallons": t["grossVol"], "StopMins": None,
+                "Units": 0, "Address": t["address"], "FleetType": "", "CustType": "",
+                "GPM": None, "Arrival": arrival_to_text(t["delStart"]), "Departure": "",
+                "IsFleet": "Y" if is_fleet else "", "IsTerminal": "Y" if is_terminal else "",
+            })
+            transact_only += 1
     if not records:
         raise ValueError(f"No valid stops. {len(eff_rows)} rows, {skipped_nan} invalid gallons.")
-    return records, skipped_nan
+    return records, skipped_nan, transact_only
 
 
 def parse_customer_list(path):
@@ -1018,7 +1058,7 @@ def main():
         for f in classified["transact"]:
             rows, _, _ = read_tabular(f)
             trans_rows.extend(rows)
-        records, skipped = process_daily(eff_rows, trans_rows)
+        records, skipped, transact_only = process_daily(eff_rows, trans_rows)
         no_date = [r for r in records if not r["Date"]]
         records = [r for r in records if r["Date"]]
         raw_gallons = round(sum(r["Gallons"] for r in records), 1)
@@ -1037,6 +1077,9 @@ def main():
               f"{'OK' if gallons_check_ok else 'MISMATCH!'}")
         if skipped:
             print(f"  skipped {skipped} row(s) with invalid gallons")
+        if transact_only:
+            print(f"  added {transact_only} Transact-only delivery row(s) "
+                  f"missing from the Efficiency Report")
         if no_date:
             print(f"  WARNING: dropped {len(no_date)} row(s) with no parseable arrival date")
 
