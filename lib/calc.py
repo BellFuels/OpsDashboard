@@ -89,7 +89,7 @@ def shift_split_gallons(raw_day, split_hhmm, pay_day=None):
     shift1 = shift2 = no_time_gal = 0.0
     no_time_n = 0
     for _, r in raw_day.iterrows():
-        g = r["gallons"] or 0
+        g = r["gallons"] if pd.notna(r["gallons"]) else 0
         # deliveries name drivers in full; payroll by display first name
         s = driver_shift.get(str(r["driver"] or "").split(" ")[0].lower())
         if s is None:
@@ -175,7 +175,7 @@ def quick_view_service_metrics(rolled):
     fleet_min_unit, fleet_gal_unit, grav, gen, tank = [], [], [], [], []
     for _, r in rolled.iterrows():
         ft = normalize_service_type(r["fleet_type"])
-        sm, units, gal = r["stop_mins"], r["units"], r["gallons"] or 0
+        sm, units, gal = r["stop_mins"], r["units"], (r["gallons"] if pd.notna(r["gallons"]) else 0)
         if ft == "FLEET" and pd.notna(sm) and sm > 0 and units > 0:
             fleet_min_unit.append(sm / units)
             fleet_gal_unit.append(gal / units)
@@ -207,11 +207,12 @@ def driver_gal_hr(raw_day):
         if not r["driver"] or pd.isna(r["arrival"]):
             continue
         start = r["arrival"]
-        end = r["departure"] if pd.notna(r["departure"]) else start + timedelta(minutes=float(r["stop_mins"] or 0))
+        stop_mins = float(r["stop_mins"]) if pd.notna(r["stop_mins"]) else 0.0
+        end = r["departure"] if pd.notna(r["departure"]) else start + timedelta(minutes=stop_mins)
         d = by.setdefault(r["driver"], {"gallons": 0.0, "stops": 0, "min": start, "max": end})
         d["min"] = min(d["min"], start)
         d["max"] = max(d["max"], end)
-        d["gallons"] += r["gallons"]
+        d["gallons"] += r["gallons"] if pd.notna(r["gallons"]) else 0.0
         d["stops"] += 1
     out = {}
     for driver, d in by.items():
