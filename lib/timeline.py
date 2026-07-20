@@ -25,6 +25,8 @@ DVIR_MINS = 20  # per pre/post-trip block; accounted in the summary, not drawn
 
 def fmt_clock(mins):
     """Minutes since midnight (may exceed 24h) -> 'H:MM AM/PM'."""
+    if mins is None or pd.isna(mins):
+        return "?"
     m = int(round(mins)) % 1440
     h, mm = divmod(m, 60)
     ap = "AM" if h < 12 else "PM"
@@ -78,7 +80,8 @@ def build_timeline(data, iso_date):
             start = r["arrival"].hour * 60 + r["arrival"].minute
             if start < in_m - 360:
                 start += 1440
-            dur = float(r["stop_mins"] or 0)
+            # NaN is truthy — `or 0` doesn't catch a missing StopTime
+            dur = float(r["stop_mins"]) if pd.notna(r["stop_mins"]) else 0.0
             kind = "fleet" if r["is_fleet"] else "terminal" if r["is_terminal"] else "delivery"
             if kind == "delivery":
                 stop_time += dur
