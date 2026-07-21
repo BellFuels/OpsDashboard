@@ -185,7 +185,9 @@ with tab_daily:
     all_drivers = sorted(d for d in day_rolled["driver"].unique() if d)
     sel_drivers = f2.multiselect("Drivers", all_drivers, default=all_drivers)
     all_ft = sorted(t for t in day_rolled["fleet_type"].unique() if t)
-    sel_ft = f3.multiselect("Service type", all_ft, default=all_ft)
+    has_untyped = (day_rolled["fleet_type"] == "").any()
+    ft_options = all_ft + (["(untyped)"] if has_untyped else [])
+    sel_ft = f3.multiselect("Service type", ft_options, default=ft_options)
     g1, g2, g3 = st.columns([2, 1, 2])
     search = g1.text_input("Search stop / address", "")
     outliers_only = g2.toggle("Outliers only")
@@ -209,8 +211,11 @@ with tab_daily:
     df = calc.add_deviation_columns(day_rolled, data.averages, data.benchmarks)
     if sel_drivers != all_drivers:
         df = df[df["driver"].isin(sel_drivers)]
-    if sel_ft != all_ft:
-        df = df[(df["fleet_type"] == "") | df["fleet_type"].isin(sel_ft)]
+    if sel_ft != ft_options:
+        mask = df["fleet_type"].isin([t for t in sel_ft if t != "(untyped)"])
+        if "(untyped)" in sel_ft:
+            mask = mask | (df["fleet_type"] == "")
+        df = df[mask]
     if search.strip():
         q = search.strip().lower()
         df = df[df["stop"].str.lower().str.contains(q, regex=False)
