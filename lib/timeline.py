@@ -13,12 +13,13 @@ import plotly.graph_objects as go
 from lib.parsing import fmt_hmm
 
 COLORS = {
-    "shift": "rgba(39,160,94,0.15)",
-    "delivery": "#1d9e50",
-    "fleet": "#8e44ad",
-    "terminal": "#d4ac0d",
-    "yard": "#ff3b30",
-    "downtime": "#1e88e5",
+    "shift": "rgba(52,209,127,0.20)",   # light-green fill for the full shift span
+    "shift_border": "#000000",           # black outline around the shift bar
+    "delivery": "#1c7d47",               # dark green for delivery (stop) segments
+    "fleet": "#a569c9",
+    "terminal": "#e6c33a",
+    "yard": "#ff5b52",
+    "downtime": "#3fa0ff",
 }
 DVIR_MINS = 20  # per pre/post-trip block; accounted in the summary, not drawn
 
@@ -141,7 +142,7 @@ def build_timeline(data, iso_date):
     fig.add_trace(go.Bar(
         y=names, x=[timedelta(minutes=d["shift"]).total_seconds() * 1000 for d in drivers],
         base=[dt(d["in_m"]) for d in drivers], orientation="h", width=0.75,
-        marker=dict(color=COLORS["shift"], line=dict(color="#27a05e", width=1)),
+        marker=dict(color=COLORS["shift"], line=dict(color=COLORS["shift_border"], width=2)),
         name="Shift", hovertemplate="%{y}: %{customdata}<extra></extra>",
         customdata=[f"{d['clock_in']} – {d['clock_out']}" for d in drivers],
     ))
@@ -168,17 +169,23 @@ def build_timeline(data, iso_date):
         for mid, gap in d["gaps"]:
             fig.add_annotation(x=dt(mid), y=d["name"], text=fmt_hmm(gap),
                                showarrow=False,
-                               font=dict(size=10, color="#4a5f53"))
+                               font=dict(size=10, color="#5a6f62"))
+    # Off-white panel behind the bars so each driver's colored timeline stands out
+    # against the dark card. Fills both the plot area and the paper (so the light
+    # window runs from the top down past the x-axis time labels).
+    PANEL = "#f5f3ec"
     fig.update_layout(
         barmode="overlay", height=110 + 52 * len(drivers),
-        yaxis=dict(categoryorder="array", categoryarray=list(reversed(names)), title=None),
-        xaxis=dict(type="date", tickformat="%-I:%M %p", title=None, gridcolor="#e2ebe5"),
-        plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+        font=dict(color="#28352e"),
+        yaxis=dict(categoryorder="array", categoryarray=list(reversed(names)), title=None,
+                   automargin=True),
+        xaxis=dict(type="date", tickformat="%-I:%M %p", title=None, gridcolor="#dce0da"),
+        plot_bgcolor=PANEL, paper_bgcolor=PANEL,
         legend=dict(orientation="h", yanchor="top", y=-0.08),
-        margin=dict(l=10, r=10, t=10, b=10), bargap=0.25,
+        margin=dict(l=90, r=10, t=10, b=10), bargap=0.25,
         hoverdistance=40,
-        hoverlabel=dict(font_size=15, bgcolor="white", bordercolor="#27a05e",
-                        font=dict(color="#1a2b21"), align="left"),
+        hoverlabel=dict(font_size=15, bgcolor="#0f1613", bordercolor="#2fbf71",
+                        font=dict(color="#e5efe9"), align="left"),
     )
 
     summary = pd.DataFrame([{

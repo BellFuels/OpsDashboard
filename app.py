@@ -20,15 +20,112 @@ from lib.parsing import (ALL_SERVICE_TYPES, UnifiedFileError, fmt_hhmmss, fmt_hm
                          load_unified)
 from lib.timeline import build_timeline
 
-ACCENT = "#27a05e"
-RED_BG = "background-color: rgba(217,64,64,0.12)"
-YELLOW_BG = "background-color: rgba(192,139,21,0.15)"
-GREEN_FG = "color: #1d9e50"
+ACCENT = "#2fbf71"
+ACCENT_SOFT = "rgba(47,191,113,0.14)"
+CARD_BG = "#18211d"
+BORDER = "#263230"
+MUTED = "#8fa89b"
+RED_BG = "background-color: rgba(255,99,99,0.20)"
+YELLOW_BG = "background-color: rgba(240,190,60,0.18)"
+GREEN_FG = "color: #4fd18a"
 
 st.set_page_config(page_title="Route Tracker — Bell Fuels", page_icon="◆", layout="wide")
-st.markdown("""<style>
-[data-testid="stMetricValue"] { font-size: 1.55rem; font-weight: 700; }
-[data-testid="stMetricLabel"] p { font-size: .8rem; }
+st.markdown(f"""<style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+
+html, body, .stApp, [class*="css"] {{
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}}
+.stApp {{
+    background:
+        radial-gradient(1100px 520px at 88% -8%, rgba(47,191,113,0.08), transparent 60%),
+        radial-gradient(900px 480px at -5% 6%, rgba(47,191,113,0.05), transparent 55%),
+        #0e1613;
+}}
+[data-testid="stHeader"] {{ background: transparent; }}
+[data-testid="stMainBlockContainer"] {{ padding-top: 2.2rem; max-width: 1500px; }}
+
+/* ── Hero band ── */
+.hero {{
+    background: linear-gradient(135deg, #1b2723 0%, #141d1a 60%, #131b18 100%);
+    border: 1px solid {BORDER};
+    border-radius: 18px;
+    padding: 1.15rem 1.4rem 1.25rem;
+    margin-bottom: 1.3rem;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.03);
+    position: relative;
+    overflow: hidden;
+}}
+.hero::before {{
+    content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 4px;
+    background: linear-gradient(180deg, {ACCENT}, rgba(47,191,113,0.2));
+}}
+.hero-brand {{ display: flex; align-items: baseline; gap: .6rem; flex-wrap: wrap; }}
+.hero-mark {{ font-size: 1.9rem; color: {ACCENT}; line-height: 1;
+    text-shadow: 0 0 22px rgba(47,191,113,0.55); }}
+.hero-title {{ font-size: 2rem; font-weight: 800; letter-spacing: -.03em; line-height: 1.05;
+    background: linear-gradient(90deg, #ffffff, #cfe8db); -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent; }}
+.hero-sub {{ font-size: .95rem; color: {MUTED}; font-weight: 500; }}
+
+/* ── KPI strip ── */
+.kpi-strip {{ display: flex; flex-wrap: wrap; gap: .55rem; margin-top: .95rem; }}
+.kpi {{ display: flex; flex-direction: column; gap: .1rem; padding: .5rem .85rem;
+    background: rgba(255,255,255,0.025); border: 1px solid {BORDER};
+    border-radius: 12px; min-width: 92px; }}
+.kpi-k {{ font-size: .68rem; text-transform: uppercase; letter-spacing: .06em; color: {MUTED}; }}
+.kpi-v {{ font-size: 1.02rem; font-weight: 700; color: #eaf5ef; }}
+
+/* ── Tabs as a segmented control (Streamlit 1.59 React-Aria DOM) ── */
+.stTabs [role="tablist"] {{
+    gap: .35rem; background: {CARD_BG}; padding: .35rem; border-radius: 14px;
+    border: 1px solid {BORDER}; }}
+.stTabs [role="tablist"] [data-baseweb="tab-highlight"],
+.stTabs [role="tablist"] [data-baseweb="tab-border"] {{ display: none !important; }}
+.stTabs [data-testid="stTab"] {{
+    border-radius: 10px; padding: .35rem 1rem !important; color: {MUTED};
+    font-weight: 600; font-size: .92rem; transition: all .15s ease; }}
+.stTabs [data-testid="stTab"]:hover {{ color: #dcece4; background: rgba(255,255,255,0.03); }}
+.stTabs [data-testid="stTab"][aria-selected="true"] {{
+    background: {ACCENT_SOFT} !important; color: {ACCENT} !important;
+    box-shadow: inset 0 0 0 1px rgba(47,191,113,0.35); }}
+
+/* ── Bordered containers as elevated cards (1.59: border/radius come from theme
+      config; this only adds the fill, depth, and a hover lift) ── */
+[data-testid="stLayoutWrapper"] > [data-testid="stVerticalBlock"] {{
+    background: {CARD_BG};
+    box-shadow: 0 6px 20px rgba(0,0,0,0.28);
+    transition: box-shadow .18s ease, transform .18s ease; }}
+[data-testid="stLayoutWrapper"] > [data-testid="stVerticalBlock"]:hover {{
+    box-shadow: 0 10px 28px rgba(0,0,0,0.38); }}
+
+/* ── Metrics ── */
+[data-testid="stMetric"] {{ padding: .1rem 0; }}
+[data-testid="stMetricValue"] {{ font-size: 1.6rem; font-weight: 800; letter-spacing: -.01em;
+    color: #f0f8f3; }}
+[data-testid="stMetricLabel"] p {{ font-size: .78rem; color: {MUTED}; font-weight: 500; }}
+[data-testid="stMetricDelta"] {{ font-size: .78rem; }}
+
+/* ── Buttons ── */
+.stButton > button {{
+    border-radius: 10px; border: 1px solid {BORDER}; font-weight: 600;
+    transition: all .15s ease; }}
+.stButton > button:hover {{ border-color: {ACCENT}; color: {ACCENT}; }}
+
+/* ── Sidebar ── */
+[data-testid="stSidebar"] {{ background: #121a17; border-right: 1px solid {BORDER}; }}
+
+/* ── Dataframe ── */
+[data-testid="stDataFrame"] {{ border-radius: 12px; overflow: hidden; border: 1px solid {BORDER}; }}
+
+/* ── Plotly: round the off-white timeline panel to match the cards ── */
+[data-testid="stPlotlyChart"] {{ border-radius: 12px; overflow: hidden; }}
+
+/* ── Scrollbar ── */
+::-webkit-scrollbar {{ width: 10px; height: 10px; }}
+::-webkit-scrollbar-thumb {{ background: #2c3a34; border-radius: 8px; }}
+::-webkit-scrollbar-thumb:hover {{ background: #37493f; }}
+::-webkit-scrollbar-track {{ background: transparent; }}
 </style>""", unsafe_allow_html=True)
 
 
@@ -65,20 +162,21 @@ data = st.session_state.get("data")
 
 def page_header(subtitle_html=""):
     st.markdown(
-        f"""<div style="display:flex;align-items:baseline;gap:.6rem;flex-wrap:wrap;margin-bottom:.1rem;">
-              <span style="font-size:2.1rem;color:{ACCENT};line-height:1;">◆</span>
-              <span style="font-size:2.1rem;font-weight:700;letter-spacing:-.02em;line-height:1.1;">Route Tracker</span>
-              <span style="font-size:1rem;opacity:.55;font-weight:500;">Bell Fuels Service Co.</span>
-            </div>{subtitle_html}""",
+        f"""<div class="hero">
+              <div class="hero-brand">
+                <span class="hero-mark">◆</span>
+                <span class="hero-title">Route Tracker</span>
+                <span class="hero-sub">Bell Fuels Service Co.</span>
+              </div>
+              {subtitle_html}
+            </div>""",
         unsafe_allow_html=True)
 
 
 def status_pills(items):
-    pill = ("display:inline-block;padding:.15rem .6rem;margin:.15rem .3rem 0 0;"
-            "border:1px solid rgba(39,160,94,.35);border-radius:99px;"
-            "font-size:.8rem;color:#3c5547;background:rgba(39,160,94,.06);")
-    return ("<div style='margin:.2rem 0 .4rem 0;'>"
-            + "".join(f"<span style='{pill}'>{k} <b style='color:#1a2e22'>{v}</b></span>" for k, v in items)
+    return ("<div class='kpi-strip'>"
+            + "".join(f"<div class='kpi'><span class='kpi-k'>{k}</span>"
+                      f"<span class='kpi-v'>{v}</span></div>" for k, v in items)
             + "</div>")
 
 
@@ -172,7 +270,10 @@ with tab_qv:
         st.info(f"No punch data for {iso_to_mdy(qd)}.{hint}")
     else:
         with st.container(border=True):
-            st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+            # theme=None so Streamlit doesn't override the figure's off-white panel
+            # and dark axis text with its own dark plotly theme.
+            st.plotly_chart(fig, use_container_width=True, theme=None,
+                            config={"displayModeBar": False})
             st.dataframe(summary, hide_index=True, use_container_width=True)
 
 
@@ -307,13 +408,17 @@ with tab_drivers:
                           key=lambda x: -x[1])
             fig = go.Figure(go.Bar(
                 y=[b[0] for b in bars], x=[b[1] for b in bars], orientation="h",
-                marker_color=[ACCENT if (b[0] in comp) else "#b9cdc0" for b in bars],
-                text=[f"{b[1]:,.1f}" for b in bars], textposition="outside"))
+                marker_color=[ACCENT if (b[0] in comp) else "#3a4a43" for b in bars],
+                text=[f"{b[1]:,.1f}" for b in bars], textposition="outside",
+                textfont=dict(color="#c7d6cd")))
             title = (f"{comp[0]} — avg {metric} vs others at their stops ({len(stops)} stops)"
                      if mode == "single" else f"Avg {metric} at shared stops ({len(stops)} stops)")
-            fig.update_layout(title=title, height=120 + 34 * len(bars), plot_bgcolor="rgba(0,0,0,0)",
+            fig.update_layout(title=title, height=120 + 34 * len(bars),
+                              plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                              font=dict(color="#c7d6cd"),
                               margin=dict(l=10, r=40, t=50, b=10),
-                              yaxis=dict(autorange="reversed"))
+                              yaxis=dict(autorange="reversed"),
+                              xaxis=dict(gridcolor="#243029"))
             st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
 
             rows = []
