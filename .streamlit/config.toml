@@ -1,9 +1,13 @@
 [theme]
-primaryColor = "#27a05e"
-backgroundColor = "#f4f7f5"
-secondaryBackgroundColor = "#ffffff"
-textColor = "#1a2e22"
-font = "sans serif"
+base = "dark"
+primaryColor = "#2fbf71"
+backgroundColor = "#0e1613"
+secondaryBackgroundColor = "#18211d"
+textColor = "#e5efe9"
+linkColor = "#2fbf71"
+borderColor = "#263230"
+baseRadius = "0.7rem"
+font = "sans-serif"
 
 [browser]
 gatherUsageStats = false
