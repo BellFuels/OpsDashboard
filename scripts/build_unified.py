@@ -620,16 +620,34 @@ def parse_customer_list(path):
 
 
 def enrich_deliveries(records, customers):
-    """Port of v1 applyCustomerListToRows/enrichRowWithCustomer, memoized per stop name."""
+    """Port of v1 applyCustomerListToRows/enrichRowWithCustomer, memoized per
+    (stop, address).
+
+    When several customer accounts share a fuzzy-matching name — e.g. one company
+    with separate GEN, TANK, and FLEET sites at different addresses — the delivery
+    is routed to the account whose street matches the delivery address, not merely
+    the first name match. Matching on name alone silently mis-typed such stops
+    (Salvation Army's 5645 W 31st FLEET deliveries were tagged GEN from the
+    company's 2258 N Clybourn generator account). Falls back to the first name
+    match when no address disambiguates, preserving the original behavior."""
     normed = [(fuzzy_norm(c["Name"]), c) for c in customers]
     match_cache = {}
     unmatched_stops = set()
     for r in records:
         stop = r["Stop"]
-        if stop not in match_cache:
+        key = (stop, r["Address"])
+        if key not in match_cache:
             stop_norm = fuzzy_norm(stop)
-            match_cache[stop] = next((c for n, c in normed if fuzzy_name_match_normed(n, stop_norm)), None)
-        ci = match_cache[stop]
+            cands = [c for n, c in normed if fuzzy_name_match_normed(n, stop_norm)]
+            if len(cands) <= 1:
+                ci = cands[0] if cands else None
+            else:
+                addr_street = str(r["Address"] or "").split(",")[0]
+                ci = next((c for c in cands
+                           if addr_street and streets_roughly_match(addr_street, c.get("Street"))),
+                          None) or cands[0]
+            match_cache[key] = ci
+        ci = match_cache[key]
         if not ci:
             # no list match: keep any existing (manually entered) type
             if not (r["IsFleet"] or r["IsTerminal"]):
