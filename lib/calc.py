@@ -171,25 +171,33 @@ def month_range(iso_date):
 
 
 def quick_view_service_metrics(rolled):
-    """Port of computeQuickViewFleetGenTankMetrics."""
-    fleet_min_unit, fleet_gal_unit, grav, gen, tank = [], [], [], [], []
+    """Service-type averages computed as ratio-of-totals (Σ numerator / Σ denominator),
+    matching the Route Efficiency export's Total row.
+
+    NOTE: this deliberately differs from route_tracker_v2's
+    computeQuickViewFleetGenTankMetrics, which averaged each stop's ratio
+    (mean-of-ratios). That over-weights small stops — a 2-unit stop counted the
+    same as a 435-unit stop — inflating Fleet Min/Unit ~25-30%. Ratio-of-totals
+    reconciles with the exported Fleet total (e.g. 5197 min / 1815 units)."""
+    f_gal = f_min = f_units = 0.0
+    # per service type: [Σ gallons, Σ minutes] for the gal/min figure
+    sums = {"GRVTY": [0.0, 0.0], "GEN": [0.0, 0.0], "TANK": [0.0, 0.0]}
     for _, r in rolled.iterrows():
         ft = normalize_service_type(r["fleet_type"])
-        sm, units, gal = r["stop_mins"], r["units"], (r["gallons"] if pd.notna(r["gallons"]) else 0)
-        if ft == "FLEET" and pd.notna(sm) and sm > 0 and units > 0:
-            fleet_min_unit.append(sm / units)
-            fleet_gal_unit.append(gal / units)
-        if pd.notna(sm) and sm > 0:
-            gpm = gal / sm
-            if ft == "GRVTY":
-                grav.append(gpm)
-            elif ft == "GEN":
-                gen.append(gpm)
-            elif ft == "TANK":
-                tank.append(gpm)
-    avg = lambda a: (sum(a) / len(a)) if a else None
-    return {"fleet_min_unit": avg(fleet_min_unit), "fleet_gal_unit": avg(fleet_gal_unit),
-            "grav_gpm": avg(grav), "gen_gpm": avg(gen), "tank_gpm": avg(tank)}
+        sm, units = r["stop_mins"], r["units"]
+        gal = r["gallons"] if pd.notna(r["gallons"]) else 0.0
+        if ft == "FLEET" and pd.notna(units) and units > 0:
+            f_gal += gal
+            f_units += units
+            if pd.notna(sm) and sm > 0:
+                f_min += sm  # a stop with no time contributes units but 0 minutes
+        if pd.notna(sm) and sm > 0 and ft in sums:
+            sums[ft][0] += gal
+            sums[ft][1] += sm
+    ratio = lambda n, d: (n / d) if d else None
+    return {"fleet_min_unit": ratio(f_min, f_units), "fleet_gal_unit": ratio(f_gal, f_units),
+            "grav_gpm": ratio(*sums["GRVTY"]), "gen_gpm": ratio(*sums["GEN"]),
+            "tank_gpm": ratio(*sums["TANK"])}
 
 
 # ─── Gal/hr ──────────────────────────────────────────────────────────────────
