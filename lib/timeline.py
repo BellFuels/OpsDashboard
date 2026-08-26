@@ -20,6 +20,7 @@ COLORS = {
     "terminal": "#e6c33a",
     "yard": "#ff5b52",
     "downtime": "#3fa0ff",
+    "over": "#e5484d",                   # red: stop time beyond the site's historical average
 }
 DVIR_MINS = 20  # per pre/post-trip block; accounted in the summary, not drawn
 
@@ -53,12 +54,26 @@ def to_abs_mins(t, ref):
 
 def build_timeline(data, iso_date):
     """Returns (drivers list, figure, summary DataFrame) for the date, or (None, None, None)
-    if no punch data. Each driver dict: name, in_m, out_m, segments [(start_m, dur_m, kind, label)]."""
+    if no punch data. Each driver dict: name, in_m, out_m, segments
+    [(start_m, dur_m, kind, label, over_m)] where over_m is minutes above the site's
+    historical average (delivery stops only; 0 otherwise)."""
     pay = data.payroll[(data.payroll["date"] == iso_date) & (data.payroll["clock_in"] != "")]
     if pay.empty:
         return None, None, None
     by_driver = {r["driver"]: r for _, r in pay.iterrows()}
     day_deliveries = data.deliveries[data.deliveries["date"] == iso_date]
+
+    # Historical average stop-time per site (address, stop), from PRIOR visits
+    # only — strictly before the viewed day — with at least 2 prior visits. Each
+    # delivery bar is split into on-average (green) and over-average (red) using
+    # this baseline; sites with too little history stay all-green.
+    prior = data.rolled_history[(data.rolled_history["date"] < iso_date)
+                                & (data.rolled_history["address"] != "")]
+    site_avg = {}
+    for (addr, stop), g in prior.groupby(["address", "stop"]):
+        mins = g["stop_mins"].dropna()
+        if len(mins) >= 2:
+            site_avg[(addr, stop)] = mins.mean()
 
     drivers = []
     for name in data.driver_order:
@@ -84,11 +99,21 @@ def build_timeline(data, iso_date):
             # NaN is truthy — `or 0` doesn't catch a missing StopTime
             dur = float(r["stop_mins"]) if pd.notna(r["stop_mins"]) else 0.0
             kind = "fleet" if r["is_fleet"] else "terminal" if r["is_terminal"] else "delivery"
+            over = 0.0
+            cmp = ""
             if kind == "delivery":
                 stop_time += dur
+                avg = site_avg.get((r["address"], r["stop"]))
+                if avg is not None:
+                    over = max(0.0, dur - avg)
+                    cmp = (f"<br><b>+{over:.0f} min over</b> {avg:.0f} min avg" if over > 0
+                           else f"<br>{avg - dur:.0f} min under {avg:.0f} min avg")
+                else:
+                    cmp = "<br>no site baseline yet (needs 2+ prior visits)"
             segs.append((start, max(dur, 2), kind,
-                         f"<b>{r['stop']}</b><br>{r['gallons']:g} gal · "
-                         f"{fmt_clock(start)} → {fmt_clock(start + dur)}"))
+                         f"<b>{r['stop']}</b><br>{r['gallons']:g} gal · {dur:.0f} min · "
+                         f"{fmt_clock(start)} → {fmt_clock(start + dur)}{cmp}",
+                         over))
         b2y = p.get("back_to_yard", "")
         b2y_m = to_abs_mins(b2y, in_m)
         yard = out_m - b2y_m if b2y_m is not None and in_m <= b2y_m <= out_m else None
@@ -101,7 +126,7 @@ def build_timeline(data, iso_date):
             downtime = de_m - ds_m
             note = str(p.get("downtime_note", "") or "").strip()
             segs.append((ds_m, downtime, "downtime",
-                         f"<b>{note or 'Downtime'}</b><br>{ds} → {de} · {fmt_hmm(downtime)}"))
+                         f"<b>{note or 'Downtime'}</b><br>{ds} → {de} · {fmt_hmm(downtime)}", 0))
         # travel-time gaps (≥30 min): from end of pre-trip DVIR, between stops,
         # to the return to the yard (or post-trip DVIR if no return entered).
         # Tracks the furthest end seen so far so overlapping/nested stops
@@ -120,7 +145,7 @@ def build_timeline(data, iso_date):
                 gaps.append((cur_end + gap / 2, gap))
         if yard:
             segs.append((b2y_m, yard, "yard",
-                         f"<b>Back at yard</b><br>{b2y} → {p['clock_out']} · {fmt_hmm(yard)}"))
+                         f"<b>Back at yard</b><br>{b2y} → {p['clock_out']} · {fmt_hmm(yard)}", 0))
         shift = out_m - in_m
         dvir = DVIR_MINS * 2
         # yard time overlaps the post-trip DVIR block; don't double-count it
@@ -143,26 +168,95 @@ def build_timeline(data, iso_date):
         y=names, x=[timedelta(minutes=d["shift"]).total_seconds() * 1000 for d in drivers],
         base=[dt(d["in_m"]) for d in drivers], orientation="h", width=0.75,
         marker=dict(color=COLORS["shift"], line=dict(color=COLORS["shift_border"], width=2)),
-        name="Shift", hovertemplate="%{y}: %{customdata}<extra></extra>",
-        customdata=[f"{d['clock_in']} – {d['clock_out']}" for d in drivers],
+        name="Shift",
+        # The shift band spans the whole row, so it would win the hover over the
+        # much narrower stop bars drawn on top (a 19-min stop is ~3% of a 10-hour
+        # shift). Skip its hover entirely — the punch times it showed are already
+        # in the summary table's "Punches" column below the chart.
+        hoverinfo="skip",
     ))
+    ms = lambda m: timedelta(minutes=m).total_seconds() * 1000
+    STOP_KINDS = ("delivery", "fleet", "terminal")
+
+    def nested_ids(d):
+        """Segments drawn entirely inside a longer stop — concurrent deliveries at
+        one site (e.g. Green Soils sits inside the Plote yard stop). A 19-min stop
+        inside a 151-min one is ~7px wide and is completely covered by its parent,
+        so it gets its own thinner bar drawn last (on top) to stay visible and
+        hoverable."""
+        out = set()
+        segs = [s for s in d["segments"] if s[2] in STOP_KINDS]
+        for i, a in enumerate(segs):
+            for b in segs:
+                if b is a or b[2] not in STOP_KINDS:
+                    continue
+                if b[0] <= a[0] and a[0] + a[1] <= b[0] + b[1] and b[1] > a[1]:
+                    out.add(id(a))
+                    break
+        return out
+
+    nested = {d["name"]: nested_ids(d) for d in drivers}
+
     for kind, label in [("yard", "Back at Yard Time"), ("downtime", "Downtime"),
-                        ("delivery", "Delivery Stop"), ("fleet", "Fleet Fuel"),
-                        ("terminal", "Terminal Load")]:
+                        ("delivery", "Stop time"), ("fleet", "Fleet Fuel"),
+                        ("terminal", "Terminal Load"), ("over", "Over site avg")]:
         ys, xs, bases, texts = [], [], [], []
         for d in drivers:
-            for start, dur, k, txt in d["segments"]:
+            for seg in d["segments"]:
+                start, dur, k, txt, over = seg
+                if k in STOP_KINDS and id(seg) in nested[d["name"]]:
+                    continue  # drawn later, on top
+                if kind == "over":
+                    # red tail: the portion of a delivery beyond the site average
+                    if k == "delivery" and over > 0:
+                        ys.append(d["name"])
+                        xs.append(ms(over))
+                        bases.append(dt(start + (dur - over)))
+                        texts.append(txt)
+                    continue
                 if k != kind:
                     continue
+                # full stop drawn green (with a black outline so touching stops stay
+                # distinct); the red "over" trace overlays its tail on top
                 ys.append(d["name"])
-                xs.append(timedelta(minutes=dur).total_seconds() * 1000)
+                xs.append(ms(dur))
                 bases.append(dt(start))
                 texts.append(txt)
         if not ys:
             continue
+        # thin black border on each stop segment so back-to-back stops don't merge
+        border = 1 if kind in ("delivery", "fleet", "terminal") else 0
         fig.add_trace(go.Bar(y=ys, x=xs, base=bases, orientation="h", width=0.45,
-                             marker_color=COLORS[kind], name=label,
-                             hovertemplate="%{customdata}<extra></extra>", customdata=texts))
+                             marker=dict(color=COLORS[kind], line=dict(color="#000000", width=border)),
+                             name=label, hovertemplate="%{customdata}<extra></extra>", customdata=texts))
+
+    # Nested stops get their own thin sub-lane just below the main stop bar
+    # (offset past the 0.45-wide bars' ±0.225 extent, still inside the shift band).
+    # Overlapping bars can't be hovered separately — Plotly's "closest" resolves a
+    # tie in favour of the lower trace index, so a nested bar drawn on top is still
+    # swallowed by its parent. Giving it clear vertical space is what makes it
+    # both visible and reliably hoverable.
+    for want_over in (False, True):
+        ys, xs, bases, texts = [], [], [], []
+        for d in drivers:
+            for seg in d["segments"]:
+                start, dur, k, txt, over = seg
+                if k not in STOP_KINDS or id(seg) not in nested[d["name"]]:
+                    continue
+                if want_over and not (k == "delivery" and over > 0):
+                    continue
+                ys.append(d["name"])
+                xs.append(ms(over if want_over else dur))
+                bases.append(dt(start + (dur - over) if want_over else start))
+                texts.append(txt)
+        if not ys:
+            continue
+        fig.add_trace(go.Bar(
+            y=ys, x=xs, base=bases, orientation="h", width=0.13, offset=0.235,
+            marker=dict(color=COLORS["over"] if want_over else COLORS["delivery"],
+                        line=dict(color="#000000", width=0 if want_over else 1)),
+            name="Over site avg" if want_over else "Stop time",
+            showlegend=False, hovertemplate="%{customdata}<extra></extra>", customdata=texts))
     # travel-time labels in the gaps between stops (annotations survive
     # st.plotly_chart theming, unlike text-mode scatter traces)
     for d in drivers:
@@ -183,7 +277,9 @@ def build_timeline(data, iso_date):
         plot_bgcolor=PANEL, paper_bgcolor=PANEL,
         legend=dict(orientation="h", yanchor="top", y=-0.08),
         margin=dict(l=90, r=10, t=10, b=10), bargap=0.25,
-        hoverdistance=40,
+        # "closest" + a generous pixel radius so a short stop can be grabbed from
+        # just outside its narrow bar
+        hovermode="closest", hoverdistance=40,
         hoverlabel=dict(font_size=15, bgcolor="#0f1613", bordercolor="#2fbf71",
                         font=dict(color="#e5efe9"), align="left"),
     )
