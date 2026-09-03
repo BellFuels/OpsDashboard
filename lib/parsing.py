@@ -230,6 +230,33 @@ def clock_str(v):
     return f"{h % 12 or 12}:{mm:02d} {'AM' if h % 24 < 12 else 'PM'}"
 
 
+COUNTY_SUFFIX_RE = re.compile(r",\s*[A-Za-z][A-Za-z ]*$")
+
+
+def normalize_stop(v):
+    """Canonical stop name — collapse whitespace and case so the same customer at
+    the same address keys to one row ('TRUCK KING' vs 'Truck King')."""
+    return re.sub(r"\s+", " ", str(v or "").strip()).upper()
+
+
+def normalize_address(a):
+    """Canonical form of a delivery address, used for both display and grouping.
+
+    The builder appends ', <COUNTY>' to any address it can match to a customer
+    record, but only began doing so partway through the history — so one site
+    shows up as both '5645 W 31ST STREET' and '5645 W 31ST STREET, COOK'. Case
+    drifts too ('513 Express Center Dr'). Since averages key on (address, stop),
+    that split a site's history into separate rows: 29 stops covering 19% of all
+    deliveries, which skewed the Daily tab's vs-Avg columns and made established
+    sites look like they had no baseline on the timeline.
+
+    A trailing segment containing digits (', STE 1950', ', P-107') is a real part
+    of the address and is kept.
+    """
+    s = re.sub(r"\s+", " ", str(a or "").strip())
+    return COUNTY_SUFFIX_RE.sub("", s).upper()
+
+
 def load_unified(file_bytes: bytes) -> UnifiedData:
     """Parse the unified workbook from raw bytes. Never touches disk."""
     try:
@@ -261,10 +288,10 @@ def load_unified(file_bytes: bytes) -> UnifiedData:
             stop_mins = parse_float(col(6))
             gpm = parse_float(col(11))
             drows.append({
-                "date": date, "driver": cell_str(col(1)), "stop": cell_str(col(2)),
+                "date": date, "driver": cell_str(col(1)), "stop": normalize_stop(col(2)),
                 "so": cell_str(col(3)), "product": cell_str(col(4)), "gallons": gallons,
                 "stop_mins": round(stop_mins) if stop_mins is not None else None,
-                "units": parse_int(col(7)), "address": cell_str(col(8)),
+                "units": parse_int(col(7)), "address": normalize_address(col(8)),
                 "fleet_type": cell_str(col(9)), "cust_type": cell_str(col(10)),
                 "gpm": gpm, "arrival": arrival_to_datetime(col(12)),
                 "departure": arrival_to_datetime(col(13)),
