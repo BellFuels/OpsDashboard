@@ -42,14 +42,65 @@ made **in Excel on the unified file** before it's emailed — never in this app.
 4. Test: open the app URL in a private/incognito window with a non-invited
    account — it must be blocked.
 
+## Making a change
+
+There is **one** GitHub repo (`BellFuels/OpsDashboard`) and **two local clones**
+of it:
+
+| Clone | Line endings |
+|---|---|
+| `Desktop\OpsDashboard` | CRLF |
+| `The_Oracle_USB\streamlit_app` | LF |
+
+They share a remote but do not update together, so either can fall behind.
+Streamlit Community Cloud watches `main`, so **pushing to `main` is the deploy** —
+there is no separate publish step.
+
+1. **Pull first**, in whichever clone you are about to edit:
+
+   ```bash
+   git pull --ff-only origin main
+   ```
+
+2. **Edit and test locally.** A change under `lib/` needs a server restart — a
+   browser reload only re-runs `app.py`, not the cached imports.
+3. **Run the data check** from the Security checklist below. Output must be empty.
+4. **Commit and push.** This triggers the redeploy:
+
+   ```bash
+   git push origin main
+   ```
+
+5. **Watch the build** at https://share.streamlit.io → your app → "Manage app".
+   Usually a minute or two; longer if `requirements.txt` changed. The deployed
+   app has no `ORACLE_DEV_FILE`, so you land on the upload gate and need that
+   day's `Bell_Unified_<date>.xlsx` to see anything.
+6. **Pull in the other clone** so it does not drift:
+
+   ```bash
+   git pull --ff-only origin main
+   ```
+
+Never hand-copy files between the two clones. That leaves the second one dirty
+and stale — uncommitted edits sitting on an older commit — even when the file
+contents happen to match.
+
 ## Security checklist
 
 - ✅ **Private repo.** Create with `gh repo create <name> --private` and verify
   Settings → General shows "Private".
 - ✅ **No data in git.** `.gitignore` blocks `*.xls*`, `*.csv`, `*.pdf`,
   `*.json`, and the `inbox/`, `unified/`, `processed/` folders. Before every
-  push run: `git ls-files | grep -iE '\.(xlsx?|xlsm|csv|pdf|json)$'` — output
-  must be empty.
+  push run:
+
+  ```bash
+  git ls-files | grep -iE '\.(xlsx?|xlsm|csv|pdf|json)$' | grep -v '^\.devcontainer/'
+  ```
+
+  Output must be empty. (The `.devcontainer/` filter excludes
+  `devcontainer.json`, which is tracked on purpose — it is Codespaces
+  scaffolding, not data. Without that filter the check always reports a false
+  positive.)
 - ✅ **Upload-per-session only.** Data enters via the upload box, is parsed
   from memory (`BytesIO`), and lives in `st.session_state` for that session
   only. The app never writes files, never uses `st.cache_data` for data
