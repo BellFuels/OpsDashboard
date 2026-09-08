@@ -52,6 +52,26 @@ def to_abs_mins(t, ref):
     return v
 
 
+def merge_minutes(intervals):
+    """Total wall-clock minutes covered by [start, end) intervals, counting any
+    overlap once. The delivery feed has one row per ticket, so a single physical
+    stop shows up N times when N units are fueled there (and separate SOs at one
+    site can run concurrently) — summing row durations counted those minutes
+    repeatedly and could push a driver's stop time past their whole shift."""
+    ivals = sorted((s, e) for s, e in intervals if e > s)
+    if not ivals:
+        return 0.0
+    total = 0.0
+    cur_s, cur_e = ivals[0]
+    for s, e in ivals[1:]:
+        if s <= cur_e:
+            cur_e = max(cur_e, e)
+        else:
+            total += cur_e - cur_s
+            cur_s, cur_e = s, e
+    return total + cur_e - cur_s
+
+
 def build_timeline(data, iso_date):
     """Returns (drivers list, figure, summary DataFrame) for the date, or (None, None, None)
     if no punch data. Each driver dict: name, in_m, out_m, segments
@@ -89,7 +109,7 @@ def build_timeline(data, iso_date):
         segs = []
         # deliveries matched by first word of the full driver name (v2 line 1242)
         mine = day_deliveries[day_deliveries["driver"].str.split(" ").str[0].str.lower() == name.lower()]
-        stop_time = 0
+        stop_ivals = []
         for _, r in mine.iterrows():
             if pd.isna(r["arrival"]):
                 continue
@@ -101,8 +121,12 @@ def build_timeline(data, iso_date):
             kind = "fleet" if r["is_fleet"] else "terminal" if r["is_terminal"] else "delivery"
             over = 0.0
             cmp = ""
+            # every ticket counts toward stop time — customer deliveries, fleet
+            # fuelings and terminal loads are all time the driver is on a stop
+            stop_ivals.append((start, start + dur))
             if kind == "delivery":
-                stop_time += dur
+                # baselines come from deliveries_no_fleet, so only customer stops
+                # have an over-average comparison
                 avg = site_avg.get((r["address"], r["stop"]))
                 if avg is not None:
                     over = max(0.0, dur - avg)
@@ -147,6 +171,11 @@ def build_timeline(data, iso_date):
             segs.append((b2y_m, yard, "yard",
                          f"<b>Back at yard</b><br>{b2y} → {p['clock_out']} · {fmt_hmm(yard)}", 0))
         shift = out_m - in_m
+        # Time in stops = the union of every ticket's interval, clipped to the
+        # punch window: overlapping tickets count once, and minutes recorded
+        # outside the clocked shift aren't part of it. Keeps Stop % a true share
+        # of the shift.
+        stop_time = merge_minutes((max(s0, in_m), min(e0, out_m)) for s0, e0 in stop_ivals)
         dvir = DVIR_MINS * 2
         # yard time overlaps the post-trip DVIR block; don't double-count it
         unacc = max(0, shift - stop_time - dvir - max(0, (yard or 0) - DVIR_MINS)

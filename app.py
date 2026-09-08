@@ -134,6 +134,14 @@ def iso_to_mdy(iso):
     return f"{d.month}/{d.day}/{d.year}"
 
 
+def nearest_date(iso, options):
+    """Snap a picked date to one that actually has route data: the latest on or
+    before it (so weekends/holidays fall back to the prior working day), or the
+    earliest available if the pick predates the file."""
+    prior = [d for d in options if d <= iso]
+    return prior[-1] if prior else options[0]
+
+
 # ─── Session gate: upload once, keep in session_state only ───────────────────
 
 st.sidebar.markdown(f"### <span style='color:{ACCENT}'>◆</span> Route Tracker", unsafe_allow_html=True)
@@ -209,7 +217,16 @@ tab_qv, tab_daily, tab_stops, tab_drivers, tab_payroll, tab_settings = st.tabs(
 # ─── Quick View ──────────────────────────────────────────────────────────────
 
 with tab_qv:
-    qd = st.selectbox("Selected date", list(reversed(dates)), format_func=iso_to_mdy)
+    # Not a selectbox: with 169 options Streamlit leaves the current value in the
+    # input unselected, so typing appends to it ("9/7/20269/3/2026") and filters
+    # the list to nothing. A date picker takes a typed or clicked date directly.
+    picked = st.date_input("Selected date", value=date.fromisoformat(dates[-1]),
+                           min_value=date.fromisoformat(dates[0]),
+                           max_value=date.fromisoformat(dates[-1]),
+                           format="MM/DD/YYYY").isoformat()
+    qd = nearest_date(picked, dates)
+    if qd != picked:
+        st.caption(f"No route data for {iso_to_mdy(picked)} — showing {iso_to_mdy(qd)}.")
     raw_day = data.deliveries_no_fleet[data.deliveries_no_fleet["date"] == qd]
     day_rolled = data.rolled_history[data.rolled_history["date"] == qd]
     pay_day = data.payroll[(data.payroll["date"] == qd) & (data.payroll["clock_in"] != "")]
@@ -284,7 +301,14 @@ with tab_qv:
 
 with tab_daily:
     f1, f2, f3 = st.columns([1.2, 2.5, 2])
-    rd = f1.selectbox("Date", list(reversed(dates)), format_func=iso_to_mdy, key="report_date")
+    # date_input, not selectbox — see the Quick View picker for why
+    rd_picked = f1.date_input("Date", value=date.fromisoformat(dates[-1]),
+                              min_value=date.fromisoformat(dates[0]),
+                              max_value=date.fromisoformat(dates[-1]),
+                              format="MM/DD/YYYY", key="report_date").isoformat()
+    rd = nearest_date(rd_picked, dates)
+    if rd != rd_picked:
+        f1.caption(f"No route data for {iso_to_mdy(rd_picked)} — showing {iso_to_mdy(rd)}.")
     day_rolled = data.rolled_history[data.rolled_history["date"] == rd]
     all_drivers = sorted(d for d in day_rolled["driver"].unique() if d)
     sel_drivers = f2.multiselect("Drivers", all_drivers, default=all_drivers)
