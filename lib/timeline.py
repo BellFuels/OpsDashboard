@@ -93,7 +93,10 @@ def build_timeline(data, iso_date):
     for (addr, stop), g in prior.groupby(["address", "stop"]):
         mins = g["stop_mins"].dropna()
         if len(mins) >= 2:
-            site_avg[(addr, stop)] = mins.mean()
+            gal = g["gallons"].dropna()
+            # (avg stop minutes, avg gallons) — the minutes drive the green/red
+            # split, the gallons are shown on hover for context
+            site_avg[(addr, stop)] = (mins.mean(), gal.mean() if len(gal) else None)
 
     drivers = []
     for name in data.driver_order:
@@ -127,15 +130,21 @@ def build_timeline(data, iso_date):
             if kind == "delivery":
                 # baselines come from deliveries_no_fleet, so only customer stops
                 # have an over-average comparison
-                avg = site_avg.get((r["address"], r["stop"]))
-                if avg is not None:
+                base = site_avg.get((r["address"], r["stop"]))
+                if base is not None:
+                    avg, avg_gal = base
                     over = max(0.0, dur - avg)
                     cmp = (f"<br><b>+{over:.0f} min over</b> {avg:.0f} min avg" if over > 0
                            else f"<br>{avg - dur:.0f} min under {avg:.0f} min avg")
+                    if avg_gal is not None:
+                        cmp += f" · {avg_gal:,.0f} gal avg"
                 else:
                     cmp = "<br>no site baseline yet (needs 2+ prior visits)"
+            # address on its own line under the stop name, for every ticket kind
+            addr_line = f"<br>{r['address']}" if r["address"] else ""
             segs.append((start, max(dur, 2), kind,
-                         f"<b>{r['stop']}</b><br>{r['gallons']:g} gal · {dur:.0f} min · "
+                         f"<b>{r['stop']}</b>{addr_line}<br>"
+                         f"{r['gallons']:g} gal · {dur:.0f} min · "
                          f"{fmt_clock(start)} → {fmt_clock(start + dur)}{cmp}",
                          over))
         b2y = p.get("back_to_yard", "")
