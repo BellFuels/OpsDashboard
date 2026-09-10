@@ -420,6 +420,8 @@ def load_unified(file_bytes: bytes) -> UnifiedData:
                 "gpm": gpm, "arrival": arrival_to_datetime(col(12)),
                 "departure": arrival_to_datetime(col(13)),
                 "is_fleet": cell_str(col(14)) == "Y", "is_terminal": cell_str(col(15)) == "Y",
+                # Town is written by the builder; older files predate the column
+                "town_src": normalize_stop(col(16)),
             })
         if not drows:
             raise UnifiedFileError("The unified file has no delivery rows.")
@@ -472,8 +474,12 @@ def load_unified(file_bytes: bytes) -> UnifiedData:
             # col 4 is Street; it is the only place the town appears
             cust_streets.append(cell_str(col(4)))
         customers = pd.DataFrame(crows, columns=["name", "cust_type", "svc_type"])
+        # prefer the town the builder resolved (it matched the customer record
+        # exactly); fall back to inferring it for rows built before that existed
         town_by_addr = build_town_lookup(cust_streets, deliveries["address"].unique())
-        deliveries["town"] = deliveries["address"].map(town_by_addr).fillna("")
+        inferred = deliveries["address"].map(town_by_addr).fillna("")
+        deliveries["town"] = deliveries["town_src"].where(deliveries["town_src"] != "", inferred)
+        deliveries = deliveries.drop(columns=["town_src"])
     finally:
         wb.close()
 
