@@ -140,8 +140,14 @@ def build_timeline(data, iso_date):
                         cmp += f" · {avg_gal:,.0f} gal avg"
                 else:
                     cmp = "<br>no site baseline yet (needs 2+ prior visits)"
-            # address on its own line under the stop name, for every ticket kind
-            addr_line = f"<br>{r['address']}" if r["address"] else ""
+            # address (with the town where we could resolve one) on its own line
+            # under the stop name, for every ticket kind
+            town = r.get("town", "")
+            # some addresses already carry the town (terminal loads spell out the
+            # full street/city/ZIP) — don't repeat it
+            where = (f"{r['address']}, {town}"
+                     if r["address"] and town and town not in r["address"] else r["address"])
+            addr_line = f"<br>{where}" if where else ""
             segs.append((start, max(dur, 2), kind,
                          f"<b>{r['stop']}</b>{addr_line}<br>"
                          f"{r['gallons']:g} gal · {dur:.0f} min · "
