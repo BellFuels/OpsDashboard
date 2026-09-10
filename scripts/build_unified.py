@@ -54,7 +54,7 @@ DEFAULT_NAME_MAP = {
 
 DELIVERY_COLUMNS = ["Date", "Driver", "Stop", "SO", "Product", "Gallons", "StopMins",
                     "Units", "Address", "FleetType", "CustType", "GPM",
-                    "Arrival", "Departure", "IsFleet", "IsTerminal"]
+                    "Arrival", "Departure", "IsFleet", "IsTerminal", "Town"]
 PAYROLL_COLUMNS = ["Date", "Driver", "Hours", "ClockIn", "ClockOut",
                    "BackToYard", "DowntimeStart", "DowntimeEnd", "DowntimeNote"]
 # manually entered in Excel; preserved when a date's payroll PDF is re-dropped
@@ -619,6 +619,191 @@ def parse_customer_list(path):
     return customers
 
 
+TOWN_STATE_ZIP_RE = re.compile(r"\s+[A-Z]{2}\s+(\d{5})(?:-\d{4})?\s*$")
+# words that can never be part of a town name
+TOWN_STOPWORDS = frozenset({
+    "STREET", "ST", "AVENUE", "AVE", "ROAD", "RD", "DRIVE", "DR", "BOULEVARD", "BLVD",
+    "LANE", "LN", "COURT", "CT", "WAY", "PLACE", "PL", "PARKWAY", "PKWY", "PLAZA",
+    "HIGHWAY", "HWY", "TRAIL", "SUITE", "STE", "UNIT", "APT", "BLDG", "FLOOR", "FL",
+    "DOCK", "ROOM", "RM", "ATTN", "N", "S", "E", "W", "NORTH", "SOUTH", "EAST", "WEST",
+})
+
+
+TOWN_SUFFIX_WORDS = frozenset({
+    "PARK", "HILLS", "HEIGHTS", "GROVE", "VILLAGE", "CITY", "TERRACE", "RIDGE",
+    "BROOK", "LAWN", "FOREST", "ESTATES", "POINT", "BEACH", "LAKE", "GLEN",
+})
+
+
+def town_tail(tokens):
+    """Trim a token run down to the town itself: keep only what follows the last
+    street-type or unit word, because a town name never contains one. Filtering
+    those words out instead of cutting at them left the street behind
+    ('RIDGE ROAD MINOOKA' -> 'RIDGE MINOOKA')."""
+    out = list(tokens)
+    last = max((i for i, t in enumerate(out) if t in TOWN_STOPWORDS), default=-1)
+    out = out[last + 1:]
+    # a town name never contains a digit, so this also drops unit codes that
+    # follow a suite marker ("SUITE X106 MONTGOMERY" -> "MONTGOMERY")
+    return [t for t in out if not re.search(r"\d", t)]
+
+
+def build_town_vocab(customers):
+    """Town names that recur across the customer list. Used to snap a noisy
+    extraction onto a name we have actually seen ('PLOTE JOB SCHAUMBURG' ->
+    'SCHAUMBURG')."""
+    counts = {}
+    for c in customers:
+        s = cell_str(c.get("Street")).upper()
+        m = TOWN_STATE_ZIP_RE.search(s)
+        if not m:
+            continue
+        cand = town_tail(s[:m.start()].strip().split())
+        if cand and len(cand) <= 3:
+            k = " ".join(cand)
+            counts[k] = counts.get(k, 0) + 1
+    seen = {k for k, n in counts.items() if n >= 3}
+    single = {k for k in seen if " " not in k}
+    # A multi-word entry ending in a town we already know is a street plus that
+    # town ("KEDZIE CHICAGO"), not a place. Genuine two-word towns survive because
+    # their last word is not a town on its own — "PLAINES" never appears without
+    # "DES", nor "HILLS" without "HICKORY".
+    out = set(single)
+    for k in sorted(seen, key=lambda x: len(x.split())):
+        if " " not in k:
+            continue
+        parts = k.split()
+        # ...or whose last two words are, which catches the three-word variants
+        # ("HALSTED CALUMET PARK" on top of "CALUMET PARK")
+        if parts[-1] in out or (len(parts) > 2 and " ".join(parts[-2:]) in out):
+            continue
+        out.add(k)
+    return out
+
+
+def build_zip_towns(customers):
+    """ZIP -> most common town among its customer addresses. Only a last resort:
+    ZIPs here straddle town lines (60638 covers both Chicago and Bedford Park), so
+    a ZIP-wide vote will overrule a correct per-address town. The address's own
+    record is always preferred."""
+    by_zip = {}
+    for c in customers:
+        s = cell_str(c.get("Street")).upper()
+        m = TOWN_STATE_ZIP_RE.search(s)
+        if not m:
+            continue
+        cand = town_tail(s[:m.start()].strip().split())
+        if cand and len(cand) <= 3:
+            by_zip.setdefault(m.group(1), {})
+            k = " ".join(cand)
+            by_zip[m.group(1)][k] = by_zip[m.group(1)].get(k, 0) + 1
+    return {z: max(v.items(), key=lambda kv: kv[1])[0] for z, v in by_zip.items() if v}
+
+
+def snap_to_vocab(tokens, vocab):
+    """Longest trailing run that is a town we recognise; keeps 'HICKORY HILLS'
+    whole rather than collapsing it to 'HILLS'."""
+    for n in (3, 2, 1):
+        if len(tokens) >= n and " ".join(tokens[-n:]) in vocab:
+            return tokens[-n:]
+    # nothing recognised: a run this long is street text with the town on the end
+    # ("WATER COMMISSION BROOKFIELD"), so keep the last word — but these words are
+    # only ever the tail of a two-word town ("FOREST PARK"), never a town alone
+    if len(tokens) >= 3:
+        return tokens[-2:] if tokens[-1] in TOWN_SUFFIX_WORDS else tokens[-1:]
+    return tokens
+
+
+def customer_town(cust, delivery_addr, zip_towns, vocab=frozenset()):
+    """Town for a delivery, read off the customer record it matched.
+
+    The Customers sheet's City column is empty for every record, so the town only
+    exists inside the Street string ("5645 W 31ST STREET CICERO IL 60804") with no
+    delimiter before it. The record's own trailing words are the most reliable
+    signal — a ZIP can cover more than one town — so those win, snapped onto a
+    recognised name to shed any street text that survived. The ZIP is consulted
+    only when the record itself yields nothing usable."""
+    s = cell_str(cust.get("Street")).upper()
+    m = TOWN_STATE_ZIP_RE.search(s)
+    if not m:
+        return ""
+    cand = snap_to_vocab(town_tail(s[:m.start()].strip().split()), vocab)
+    if cand and len(cand) <= 3:
+        return " ".join(cand)
+    return zip_towns.get(m.group(1), "")
+
+
+def build_street_buckets(customers):
+    """House number -> [(customer, street-without-town)], for matching a delivery
+    to a site by address alone."""
+    buckets = {}
+    for c in customers:
+        st = cell_str(c.get("Street")).upper()
+        m = TOWN_STATE_ZIP_RE.search(st)
+        if not m:
+            continue
+        body = st[:m.start()].strip()
+        num = re.match(r"\s*(\d+)", body)
+        buckets.setdefault(num.group(1) if num else "", []).append((c, body))
+    return buckets
+
+
+def fill_towns(deliveries, customers):
+    """Populate Town on every delivery that lacks one, so history backfills on the
+    next build rather than waiting for a fresh customer list. Only Town is written
+    — types and addresses are left exactly as enrichment set them.
+
+    Matching by customer name (as enrichment does) misses any stop whose name does
+    not resemble a customer-list name, which is most of them: name-only reached
+    55% of rows. So a stop that fails the name match falls back to matching on the
+    address alone, which is what actually identifies a site here."""
+    if not customers:
+        return 0
+    normed = [(fuzzy_norm(c["Name"]), c) for c in customers]
+    zip_towns = build_zip_towns(customers)
+    vocab = build_town_vocab(customers)
+    buckets = build_street_buckets(customers)
+    cache = {}
+    filled = 0
+    for r in deliveries:
+        if cell_str(r.get("Town")):
+            continue
+        addr = r["Address"]
+        key = (r["Stop"], addr)
+        if key not in cache:
+            ci = match_customer(r["Stop"], addr, normed)
+            if ci is None or not customer_town(ci, addr, zip_towns, vocab):
+                num = re.match(r"\s*(\d+)", str(addr or ""))
+                for cand, body in buckets.get(num.group(1) if num else "", []):
+                    if streets_roughly_match(addr, body):
+                        ci = cand
+                        break
+            cache[key] = ci
+        ci = cache[key]
+        if not ci:
+            continue
+        town = customer_town(ci, addr, zip_towns, vocab)
+        if town:
+            r["Town"] = town
+            filled += 1
+    return filled
+
+
+def match_customer(stop, address, normed):
+    """Customer record for a stop. When several accounts share a fuzzy-matching
+    name — one company with GEN, TANK and FLEET sites at different addresses —
+    the delivery goes to the account whose street matches the delivery address,
+    not merely the first name match. Falls back to the first name match when no
+    address disambiguates, preserving the original behaviour."""
+    cands = [c for n, c in normed if fuzzy_name_match_normed(n, fuzzy_norm(stop))]
+    if len(cands) <= 1:
+        return cands[0] if cands else None
+    addr_street = str(address or "").split(",")[0]
+    return next((c for c in cands
+                 if addr_street and streets_roughly_match(addr_street, c.get("Street"))),
+                None) or cands[0]
+
+
 def enrich_deliveries(records, customers):
     """Port of v1 applyCustomerListToRows/enrichRowWithCustomer, memoized per
     (stop, address).
@@ -631,22 +816,15 @@ def enrich_deliveries(records, customers):
     company's 2258 N Clybourn generator account). Falls back to the first name
     match when no address disambiguates, preserving the original behavior."""
     normed = [(fuzzy_norm(c["Name"]), c) for c in customers]
+    zip_towns = build_zip_towns(customers)
+    town_vocab = build_town_vocab(customers)
     match_cache = {}
     unmatched_stops = set()
     for r in records:
         stop = r["Stop"]
         key = (stop, r["Address"])
         if key not in match_cache:
-            stop_norm = fuzzy_norm(stop)
-            cands = [c for n, c in normed if fuzzy_name_match_normed(n, stop_norm)]
-            if len(cands) <= 1:
-                ci = cands[0] if cands else None
-            else:
-                addr_street = str(r["Address"] or "").split(",")[0]
-                ci = next((c for c in cands
-                           if addr_street and streets_roughly_match(addr_street, c.get("Street"))),
-                          None) or cands[0]
-            match_cache[key] = ci
+            match_cache[key] = match_customer(stop, r["Address"], normed)
         ci = match_cache[key]
         if not ci:
             # no list match: keep any existing (manually entered) type
@@ -655,6 +833,7 @@ def enrich_deliveries(records, customers):
             continue
         r["FleetType"] = ci["SvcType"] or r["FleetType"]
         r["CustType"] = ci["CustType"] or r["CustType"]
+        r["Town"] = cell_str(r.get("Town")) or customer_town(ci, r["Address"], zip_towns, town_vocab)
         full_addr = ci["FullAddress"]
         if not r["Address"] and full_addr:
             r["Address"] = full_addr
@@ -1123,6 +1302,15 @@ def main():
     if healed:
         print(f"Type self-heal: filled missing FleetType/CustType on {healed} row(s) "
               f"from past deliveries of the same stop")
+
+    # ── town backfill (only writes Town; types/addresses untouched) ──
+    towned = fill_towns(data["deliveries"], data["customers"])
+    if towned:
+        print(f"Towns: filled {towned} delivery row(s) from the customer list")
+    have = sum(1 for r in data["deliveries"] if cell_str(r.get("Town")))
+    if data["deliveries"]:
+        print(f"  {have} of {len(data['deliveries'])} rows now carry a town "
+              f"({100 * have / len(data['deliveries']):.0f}%)")
 
     # ── payroll ──
     unmapped_names = set()
