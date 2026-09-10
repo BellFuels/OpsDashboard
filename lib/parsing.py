@@ -257,6 +257,130 @@ def normalize_address(a):
     return COUNTY_SUFFIX_RE.sub("", s).upper()
 
 
+_STATE_ZIP_RE = re.compile(r"\s+[A-Z]{2}\s+(\d{5})(?:-\d{4})?\s*$")
+# words that can never be part of a town name (street types, unit markers, directionals)
+_STREET_WORDS = frozenset({
+    "STREET", "ST", "AVENUE", "AVE", "ROAD", "RD", "DRIVE", "DR", "BOULEVARD", "BLVD",
+    "LANE", "LN", "COURT", "CT", "WAY", "PLACE", "PL", "PARKWAY", "PKWY", "PLAZA",
+    "HIGHWAY", "HWY", "TRAIL", "SUITE", "STE", "UNIT", "APT", "BLDG", "FLOOR", "FL",
+    "DOCK", "ROOM", "RM", "ATTN", "N", "S", "E", "W", "NORTH", "SOUTH", "EAST", "WEST",
+})
+
+
+def _street_key(s):
+    """Loose comparison key for a street: drop street-type words and punctuation."""
+    s = str(s or "").lower().split(",")[0]
+    s = re.sub(r"\b(street|st|avenue|ave|road|rd|drive|dr|boulevard|blvd|lane|ln|"
+               r"court|ct|way|place|pl|north|south|east|west)\b", " ", s)
+    return re.sub(r"[^a-z0-9]", "", s)
+
+
+def _streets_roughly_match(addr_street, cust_street):
+    """Copied from build_unified.streets_roughly_match so producer and consumer
+    agree on what counts as the same street."""
+    a, b = _street_key(addr_street), _street_key(cust_street)
+    if not a or not b:
+        return False
+    if a == b:
+        return True
+    if len(a) >= 6 and a in b:
+        return True
+    if len(b) >= 6 and b in a:
+        return True
+    m_a = re.match(r"^\s*(\d+)", str(addr_street))
+    m_b = re.match(r"^\s*(\d+)", str(cust_street))
+    if m_a and m_b and m_a.group(1) == m_b.group(1):
+        rest_a, rest_b = a[len(m_a.group(1)):], b[len(m_b.group(1)):]
+        if len(rest_a) >= 4 and len(rest_b) >= 4 and (rest_b[:6] in rest_a or rest_a[:6] in rest_b):
+            return True
+    return False
+
+
+def _clean_town(tokens, known):
+    toks = [t for t in tokens if t not in _STREET_WORDS and not re.fullmatch(r"[\d#.\-()/&']+", t)]
+    if not toks or len(toks) > 3:
+        return None
+    # a leading street fragment sometimes survives ("147TH OAK FOREST"); if the
+    # tail is a town we already recognise, keep only that
+    for n in (2, 1):
+        if len(toks) > n and " ".join(toks[-n:]) in known:
+            return " ".join(toks[-n:])
+    return " ".join(toks)
+
+
+def build_town_lookup(customer_streets, addresses):
+    """{delivery address -> town}, derived from the customer list.
+
+    The Customers sheet's City column is empty in practice, so the town is only
+    available buried inside the Street string ("5645 W 31ST STREET CICERO IL
+    60804"), with no delimiter between street and town. Two passes:
+
+      1. Where a ZIP has several customer addresses, the town is the trailing run
+         of words all of them share — street parts differ, the town does not.
+      2. A ZIP seen only once (158 of 423 here, e.g. Cicero) has nothing to agree
+         with, so the matched customer street's prefix is stripped using the
+         delivery address and what remains is the town.
+
+    Addresses that cannot be resolved confidently are simply left out; the caller
+    shows no town rather than a guessed one.
+    """
+    streets = [s for s in (normalize_address(x) for x in customer_streets)
+               if s and _STATE_ZIP_RE.search(s)]
+    if not streets:
+        return {}
+
+    by_zip = {}
+    for s in streets:
+        m = _STATE_ZIP_RE.search(s)
+        by_zip.setdefault(m.group(1), []).append(s[:m.start()].strip().split())
+    zip_town = {}
+    for z, bodies in by_zip.items():
+        if len(bodies) < 2:
+            continue
+        common = ()
+        for n in (1, 2, 3):
+            tails = {tuple(b[-n:]) for b in bodies if len(b) > n}
+            if len(tails) == 1:
+                common = next(iter(tails))
+            else:
+                break
+        town = list(common)
+        while town and town[0] in _STREET_WORDS:
+            town.pop(0)
+        if town:
+            zip_town[z] = " ".join(town)
+    known = set(zip_town.values())
+
+    # bucket customer streets by house number so matching stays a short scan
+    buckets = {}
+    for s in streets:
+        m = _STATE_ZIP_RE.search(s)
+        body = s[:m.start()].strip()
+        num = re.match(r"\s*(\d+)", body)
+        buckets.setdefault(num.group(1) if num else "", []).append((body, zip_town.get(m.group(1))))
+
+    out = {}
+    for addr in addresses:
+        if not addr:
+            continue
+        num = re.match(r"\s*(\d+)", addr)
+        for body, town in buckets.get(num.group(1) if num else "", []):
+            if not _streets_roughly_match(addr, body):
+                continue
+            if town:
+                out[addr] = town
+            else:
+                a_toks, b_toks = addr.split(), body.split()
+                i = 0
+                while i < len(a_toks) and i < len(b_toks) and a_toks[i] == b_toks[i]:
+                    i += 1
+                guess = _clean_town(b_toks[i:], known)
+                if guess:
+                    out[addr] = guess
+            break
+    return out
+
+
 def load_unified(file_bytes: bytes) -> UnifiedData:
     """Parse the unified workbook from raw bytes. Never touches disk."""
     try:
@@ -337,6 +461,7 @@ def load_unified(file_bytes: bytes) -> UnifiedData:
 
         # Customers (display info only — enrichment is baked into Deliveries)
         crows = []
+        cust_streets = []
         for raw in _sheet_lists(wb, "Customers"):
             def col(i):
                 return raw[i] if i < len(raw) else None
@@ -344,7 +469,11 @@ def load_unified(file_bytes: bytes) -> UnifiedData:
                 continue
             crows.append({"name": cell_str(col(0)), "cust_type": cell_str(col(2)),
                           "svc_type": cell_str(col(3))})
+            # col 4 is Street; it is the only place the town appears
+            cust_streets.append(cell_str(col(4)))
         customers = pd.DataFrame(crows, columns=["name", "cust_type", "svc_type"])
+        town_by_addr = build_town_lookup(cust_streets, deliveries["address"].unique())
+        deliveries["town"] = deliveries["address"].map(town_by_addr).fillna("")
     finally:
         wb.close()
 
