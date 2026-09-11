@@ -20,61 +20,57 @@ from lib.parsing import (ALL_SERVICE_TYPES, UnifiedFileError, fmt_hhmmss, fmt_hm
                          load_unified)
 from lib.timeline import build_timeline
 
-ACCENT = "#2fbf71"
-ACCENT_SOFT = "rgba(47,191,113,0.14)"
-CARD_BG = "#18211d"
-BORDER = "#263230"
-MUTED = "#8fa89b"
-RED_BG = "background-color: rgba(255,99,99,0.20)"
-YELLOW_BG = "background-color: rgba(240,190,60,0.18)"
-GREEN_FG = "color: #4fd18a"
+ACCENT = "#F2A73C"           # amber — hero accent, diesel, delivery stop
+ACCENT_DEEP = "#D98A1E"      # gauge gradient base
+ACCENT_SOFT = "rgba(242,167,60,0.12)"
+BG = "#0E1A24"               # deep petrol-slate page base
+CARD_BG = "#15232E"          # panel surface
+CARD_BG_2 = "#1B2C39"        # raised surface
+BORDER = "#263A48"
+BORDER_SOFT = "#20313D"      # row separators
+INK = "#EAF1F5"
+MUTED = "#8AA1AF"
+MUTED_2 = "#5E7382"          # axis / faint labels
+GREEN = "#3FCB8E"            # on-target
+RED = "#E85640"              # over-limit / OT
+RED_BG = "background-color: rgba(232,86,64,0.20)"
+YELLOW_BG = "background-color: rgba(242,167,60,0.18)"
+GREEN_FG = f"color: {GREEN}"
+DISPLAY = "'Saira Semi Condensed', system-ui, sans-serif"
+BODY = "'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif"
 
 st.set_page_config(page_title="Route Tracker — Bell Fuels", page_icon="◆", layout="wide")
 st.markdown(f"""<style>
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Saira+Semi+Condensed:wght@500;600;700&display=swap');
 
 html, body, .stApp, [class*="css"] {{
-    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    font-family: {BODY};
+    font-variant-numeric: tabular-nums;
 }}
-.stApp {{
-    background:
-        radial-gradient(1100px 520px at 88% -8%, rgba(47,191,113,0.08), transparent 60%),
-        radial-gradient(900px 480px at -5% 6%, rgba(47,191,113,0.05), transparent 55%),
-        #0e1613;
-}}
+.stApp {{ background: {BG}; }}
 [data-testid="stHeader"] {{ background: transparent; }}
 [data-testid="stMainBlockContainer"] {{ padding-top: 2.2rem; max-width: 1500px; }}
+h1, h2, h3, h4, h5, h6 {{ font-family: {DISPLAY}; font-weight: 600; letter-spacing: 0; }}
 
 /* ── Hero band ── */
 .hero {{
-    background: linear-gradient(135deg, #1b2723 0%, #141d1a 60%, #131b18 100%);
+    background: {CARD_BG};
     border: 1px solid {BORDER};
     border-radius: 18px;
     padding: 1.15rem 1.4rem 1.25rem;
     margin-bottom: 1.3rem;
-    box-shadow: 0 10px 30px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.03);
-    position: relative;
-    overflow: hidden;
-}}
-.hero::before {{
-    content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 4px;
-    background: linear-gradient(180deg, {ACCENT}, rgba(47,191,113,0.2));
 }}
 .hero-brand {{ display: flex; align-items: baseline; gap: .6rem; flex-wrap: wrap; }}
-.hero-mark {{ font-size: 1.9rem; color: {ACCENT}; line-height: 1;
-    text-shadow: 0 0 22px rgba(47,191,113,0.55); }}
-.hero-title {{ font-size: 2rem; font-weight: 800; letter-spacing: -.03em; line-height: 1.05;
-    background: linear-gradient(90deg, #ffffff, #cfe8db); -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent; }}
+.hero-mark {{ font-size: 1.6rem; color: {ACCENT}; line-height: 1; align-self: center; }}
+.hero-title {{ font-family: {DISPLAY}; font-size: 2rem; font-weight: 700; line-height: 1.05; color: {INK}; }}
 .hero-sub {{ font-size: .95rem; color: {MUTED}; font-weight: 500; }}
 
 /* ── KPI strip ── */
 .kpi-strip {{ display: flex; flex-wrap: wrap; gap: .55rem; margin-top: .95rem; }}
 .kpi {{ display: flex; flex-direction: column; gap: .1rem; padding: .5rem .85rem;
-    background: rgba(255,255,255,0.025); border: 1px solid {BORDER};
-    border-radius: 12px; min-width: 92px; }}
-.kpi-k {{ font-size: .68rem; text-transform: uppercase; letter-spacing: .06em; color: {MUTED}; }}
-.kpi-v {{ font-size: 1.02rem; font-weight: 700; color: #eaf5ef; }}
+    background: {BG}; border: 1px solid {BORDER}; border-radius: 10px; min-width: 92px; }}
+.kpi-k {{ font-size: .7rem; color: {MUTED}; }}
+.kpi-v {{ font-family: {DISPLAY}; font-size: 1.05rem; font-weight: 600; color: {INK}; }}
 
 /* ── Tabs as a segmented control (Streamlit 1.59 React-Aria DOM) ── */
 .stTabs [role="tablist"] {{
@@ -84,36 +80,56 @@ html, body, .stApp, [class*="css"] {{
 .stTabs [role="tablist"] [data-baseweb="tab-border"] {{ display: none !important; }}
 .stTabs [data-testid="stTab"] {{
     border-radius: 10px; padding: .35rem 1rem !important; color: {MUTED};
-    font-weight: 600; font-size: .92rem; transition: all .15s ease; }}
-.stTabs [data-testid="stTab"]:hover {{ color: #dcece4; background: rgba(255,255,255,0.03); }}
+    font-weight: 600; font-size: .92rem; transition: color .15s ease, background .15s ease; }}
+.stTabs [data-testid="stTab"]:hover {{ color: {INK}; background: rgba(255,255,255,0.03); }}
 .stTabs [data-testid="stTab"][aria-selected="true"] {{
     background: {ACCENT_SOFT} !important; color: {ACCENT} !important;
-    box-shadow: inset 0 0 0 1px rgba(47,191,113,0.35); }}
+    box-shadow: inset 0 0 0 1px rgba(242,167,60,0.32); }}
 
-/* ── Bordered containers as elevated cards (1.59: border/radius come from theme
-      config; this only adds the fill, depth, and a hover lift) ── */
-[data-testid="stLayoutWrapper"] > [data-testid="stVerticalBlock"] {{
-    background: {CARD_BG};
-    box-shadow: 0 6px 20px rgba(0,0,0,0.28);
-    transition: box-shadow .18s ease, transform .18s ease; }}
-[data-testid="stLayoutWrapper"] > [data-testid="stVerticalBlock"]:hover {{
-    box-shadow: 0 10px 28px rgba(0,0,0,0.38); }}
+/* ── Bordered containers as flat panels (1.59: border/radius come from theme config) ── */
+[data-testid="stLayoutWrapper"] > [data-testid="stVerticalBlock"] {{ background: {CARD_BG}; }}
 
 /* ── Metrics ── */
 [data-testid="stMetric"] {{ padding: .1rem 0; }}
-[data-testid="stMetricValue"] {{ font-size: 1.6rem; font-weight: 800; letter-spacing: -.01em;
-    color: #f0f8f3; }}
+[data-testid="stMetricValue"] {{ font-family: {DISPLAY}; font-size: 1.6rem; font-weight: 600; color: {INK}; }}
 [data-testid="stMetricLabel"] p {{ font-size: .78rem; color: {MUTED}; font-weight: 500; }}
 [data-testid="stMetricDelta"] {{ font-size: .78rem; }}
+
+/* ── Gallons band (Quick View hero) ── */
+.gal-band {{ display: grid; grid-template-columns: 118px minmax(0,1.2fr) minmax(0,1.3fr) minmax(0,1.1fr);
+    gap: 28px; align-items: center; }}
+.gal-title {{ font-family: {DISPLAY}; font-weight: 600; font-size: 15px; color: {INK}; margin: 0 0 2px; }}
+.gal-sub {{ font-size: 12.5px; color: {MUTED}; margin: 0 0 14px; }}
+.gal-big {{ font-family: {DISPLAY}; font-weight: 700; font-size: 56px; line-height: 1; color: {INK}; }}
+.gal-of {{ font-size: 13px; color: {MUTED}; margin-top: 2px; }}
+.gal-of b {{ color: {INK}; font-weight: 500; }}
+.gal-chip {{ display: inline-block; font-size: 12px; font-weight: 600; padding: 3px 8px; border-radius: 5px; margin-top: 12px; }}
+.gal-chip.ok {{ background: rgba(63,203,142,0.12); color: {GREEN}; border: 1px solid rgba(63,203,142,0.3); }}
+.gal-chip.watch {{ background: {ACCENT_SOFT}; color: {ACCENT}; border: 1px solid rgba(242,167,60,0.32); }}
+.gal-chip.crit {{ background: rgba(232,86,64,0.14); color: {RED}; border: 1px solid rgba(232,86,64,0.32); }}
+.gal-chip-note {{ font-size: 12px; color: {MUTED}; margin-left: 8px; }}
+.gal-foot {{ font-size: 11.5px; color: {MUTED_2}; margin-top: 12px; }}
+.gal-shifts {{ display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 12px; }}
+.gal-shift {{ display: flex; flex-direction: column; gap: 2px; padding: 12px 14px; background: {CARD_BG_2}; border-radius: 8px; }}
+.gal-shift .k {{ font-size: 11.5px; color: {MUTED}; }}
+.gal-shift .v {{ font-family: {DISPLAY}; font-weight: 600; font-size: 26px; color: {INK}; line-height: 1.1; }}
+.gal-period {{ display: flex; flex-direction: column; gap: 12px; border-left: 1px solid {BORDER_SOFT}; padding-left: 24px; }}
+.gal-period .k {{ font-size: 11.5px; color: {MUTED}; }}
+.gal-period .v {{ font-family: {DISPLAY}; font-weight: 600; font-size: 20px; color: {INK}; line-height: 1.1; }}
+@keyframes tankfill {{ from {{ transform: scale(1, 0); }} }}
+#tankfill {{ transform-origin: 0 196px; animation: tankfill 1.3s cubic-bezier(.4,0,.2,1) .15s both; }}
+@media (prefers-reduced-motion: reduce) {{ #tankfill {{ animation: none; }} }}
+@media (max-width: 1100px) {{ .gal-band {{ grid-template-columns: 118px minmax(0,1fr); }}
+    .gal-period {{ border-left: 0; padding-left: 0; flex-direction: row; flex-wrap: wrap; gap: 20px; }} }}
 
 /* ── Buttons ── */
 .stButton > button {{
     border-radius: 10px; border: 1px solid {BORDER}; font-weight: 600;
-    transition: all .15s ease; }}
+    transition: border-color .15s ease, color .15s ease; }}
 .stButton > button:hover {{ border-color: {ACCENT}; color: {ACCENT}; }}
 
 /* ── Sidebar ── */
-[data-testid="stSidebar"] {{ background: #121a17; border-right: 1px solid {BORDER}; }}
+[data-testid="stSidebar"] {{ background: {CARD_BG}; border-right: 1px solid {BORDER}; }}
 
 /* ── Dataframe ── */
 [data-testid="stDataFrame"] {{ border-radius: 12px; overflow: hidden; border: 1px solid {BORDER}; }}
@@ -123,8 +139,8 @@ html, body, .stApp, [class*="css"] {{
 
 /* ── Scrollbar ── */
 ::-webkit-scrollbar {{ width: 10px; height: 10px; }}
-::-webkit-scrollbar-thumb {{ background: #2c3a34; border-radius: 8px; }}
-::-webkit-scrollbar-thumb:hover {{ background: #37493f; }}
+::-webkit-scrollbar-thumb {{ background: #223543; border-radius: 8px; }}
+::-webkit-scrollbar-thumb:hover {{ background: #2E4657; }}
 ::-webkit-scrollbar-track {{ background: transparent; }}
 </style>""", unsafe_allow_html=True)
 
@@ -181,6 +197,70 @@ def page_header(subtitle_html=""):
         unsafe_allow_html=True)
 
 
+def tank_svg(fill):
+    """Vertical tank gauge, filled to `fill` (0–1). The % readout sits on the
+    liquid, so it is dark ink once the fill reaches it and light ink below."""
+    fill = max(0.0, min(1.0, fill))
+    ink = BG if fill >= 0.5 else INK
+    return f"""<svg viewBox="0 0 118 210" width="118" height="210" aria-label="Tank level gauge">
+      <defs>
+        <linearGradient id="liq" x1="0" y1="1" x2="0" y2="0">
+          <stop offset="0" stop-color="{ACCENT_DEEP}"/><stop offset="1" stop-color="{ACCENT}"/>
+        </linearGradient>
+        <clipPath id="tankclip"><rect x="14" y="14" width="90" height="182" rx="22"/></clipPath>
+      </defs>
+      <g stroke="{BORDER}" stroke-width="2">
+        <line x1="104" y1="50" x2="112" y2="50"/><line x1="104" y1="86" x2="112" y2="86"/>
+        <line x1="104" y1="122" x2="112" y2="122"/><line x1="104" y1="158" x2="112" y2="158"/>
+      </g>
+      <g clip-path="url(#tankclip)">
+        <rect x="14" y="14" width="90" height="182" fill="#101F2A"/>
+        <rect id="tankfill" x="14" y="14" width="90" height="182" fill="url(#liq)"
+              style="transform: scale(1, {fill:.4f})"/>
+        <rect x="22" y="18" width="10" height="174" rx="5" fill="rgba(255,255,255,0.08)"/>
+      </g>
+      <rect x="14" y="14" width="90" height="182" rx="22" fill="none" stroke="#3A5261" stroke-width="2.5"/>
+      <text x="59" y="114" text-anchor="middle" fill="{ink}" font-family="Saira Semi Condensed, system-ui, sans-serif"
+            font-weight="700" font-size="26">{round(fill * 100)}%</text>
+    </svg>"""
+
+
+def gallons_band(day_gal, goal, day_label, split, s1, s2, week, month, projected):
+    """Quick View hero: tank gauge of the day's gallons against its goal, the
+    shift split, and the week / month / projected totals."""
+    if goal:
+        diff = day_gal - goal
+        chip = (f"<span class='gal-chip {'ok' if diff >= 0 else 'watch'}'>{diff:+,.0f}</span>"
+                f"<span class='gal-chip-note'>vs goal · {diff / goal * 100:+.1f}%</span>")
+        of = f"<div class='gal-of'>of <b>{goal:,.0f}</b> gal goal</div>"
+        foot = ("Goal = same-weekday average over the 6 weeks before this day (days with no "
+                "deliveries count as zero).")
+        fill = day_gal / goal
+    else:
+        chip, of, fill = "", "<div class='gal-of'>no goal yet — needs prior weeks of history</div>", 0.0
+        foot = "Goal = same-weekday average over the 6 weeks before this day."
+    return f"""<div class="gal-title">Gallons delivered</div>
+      <div class="gal-sub">{day_label}</div>
+      <div class="gal-band">
+        {tank_svg(fill)}
+        <div>
+          <div class="gal-big">{day_gal:,.0f}</div>
+          {of}
+          <div>{chip}</div>
+          <div class="gal-foot">{foot}</div>
+        </div>
+        <div class="gal-shifts">
+          <div class="gal-shift"><span class="k">Shift 1 · in before {split}</span><span class="v">{s1:,.0f}</span></div>
+          <div class="gal-shift"><span class="k">Shift 2 · in from {split}</span><span class="v">{s2:,.0f}</span></div>
+        </div>
+        <div class="gal-period">
+          <div><div class="k">Week · {week[0]}</div><div class="v">{week[1]:,.0f}</div></div>
+          <div><div class="k">Month · {month[0]}</div><div class="v">{month[1]:,.0f}</div></div>
+          <div><div class="k">Projected month-end</div><div class="v">{projected:,.0f}</div></div>
+        </div>
+      </div>"""
+
+
 def status_pills(items):
     return ("<div class='kpi-strip'>"
             + "".join(f"<div class='kpi'><span class='kpi-k'>{k}</span>"
@@ -210,8 +290,8 @@ page_header(status_pills([
 ]))
 
 tab_qv, tab_daily, tab_stops, tab_drivers, tab_payroll, tab_settings = st.tabs(
-    ["⚡ Quick View", "📋 Daily Route Performance", "📊 Stop Averages", "👤 Drivers",
-     "⏱ Payroll & HOS", "⚙ Settings"])
+    ["Quick View", "Daily Route Performance", "Stop Averages", "Drivers",
+     "Payroll & HOS", "Settings"])
 
 
 # ─── Quick View ──────────────────────────────────────────────────────────────
@@ -236,20 +316,16 @@ with tab_qv:
     week_rolled = data.rolled_history[(data.rolled_history["date"] >= wk_start) & (data.rolled_history["date"] <= wk_end)]
     month_rolled = data.rolled_history[(data.rolled_history["date"] >= mo_start) & (data.rolled_history["date"] <= mo_end)]
 
-    g_day, g_shift, g_period = st.columns([1.1, 2.1, 3.2])
-    with g_day, st.container(border=True):
-        st.metric("Total gallons (day)", f"{day_rolled['gallons'].sum():,.1f}")
-    with g_shift, st.container(border=True):
-        sc1, sc2 = st.columns(2)
-        sc1.metric(f"Shift 1 · in before {data.shift_split_time}", f"{s1:,.1f}")
-        sc2.metric(f"Shift 2 · in from {data.shift_split_time}", f"{s2:,.1f}")
-    with g_period, st.container(border=True):
-        pc1, pc2, pc3 = st.columns(3)
-        pc1.metric(f"Week · {wk_label}", f"{week_rolled['gallons'].sum():,.1f}")
-        pc2.metric(f"Month · {mo_label}", f"{month_rolled['gallons'].sum():,.1f}")
-        pc3.metric("Projected month-end", f"{calc.projected_month_gallons(data.rolled_history, qd):,.1f}",
-                   help="Actual gallons through the selected date, plus day-of-week averages "
-                        "(last 6 weeks, no-delivery days count as zero) for the rest of the month.")
+    with st.container(border=True):
+        st.markdown(gallons_band(
+            day_gal=float(day_rolled["gallons"].sum()),
+            goal=calc.daily_goal(data.rolled_history, qd),
+            day_label=f"{datetime.fromisoformat(qd).strftime('%a')} {iso_to_mdy(qd)}",
+            split=data.shift_split_time, s1=s1, s2=s2,
+            week=(wk_label, float(week_rolled["gallons"].sum())),
+            month=(mo_label, float(month_rolled["gallons"].sum())),
+            projected=calc.projected_month_gallons(data.rolled_history, qd)),
+            unsafe_allow_html=True)
     if no_time_n:
         st.caption(f"⚠ {no_time_n} stop(s) with no punch data and no arrival time "
                    f"({no_time_gal:,.1f} gal) counted into Shift 1.")
@@ -493,7 +569,7 @@ with tab_drivers:
                           key=lambda x: -x[1])
             fig = go.Figure(go.Bar(
                 y=[b[0] for b in bars], x=[b[1] for b in bars], orientation="h",
-                marker_color=[ACCENT if (b[0] in comp) else "#3a4a43" for b in bars],
+                marker_color=[ACCENT if (b[0] in comp) else "#2E4657" for b in bars],
                 text=[f"{b[1]:,.1f}" for b in bars], textposition="outside",
                 textfont=dict(color="#c7d6cd")))
             title = (f"{comp[0]} — avg {metric} vs others at their stops ({len(stops)} stops)"

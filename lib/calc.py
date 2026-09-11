@@ -129,6 +129,32 @@ def yard_downtime_totals(pay_rows):
     return yard_tot, down_tot
 
 
+def weekday_averages(rolled_history, end_date, weeks=6):
+    """Average gallons per weekday over the `weeks` weeks ending at end_date
+    (inclusive). Zero-delivery days count as zeros; days before the file's
+    history begins are skipped. Returns a 7-list indexed by date.weekday()."""
+    daily = rolled_history.groupby("date")["gallons"].sum()
+    data_min = rolled_history["date"].min() if len(rolled_history) else end_date.isoformat()
+    sums, counts = [0.0] * 7, [0] * 7
+    for i in range(weeks * 7):
+        day = end_date - timedelta(days=i)
+        if day.isoformat() < data_min:
+            continue
+        sums[day.weekday()] += float(daily.get(day.isoformat(), 0.0))
+        counts[day.weekday()] += 1
+    return [sums[i] / counts[i] if counts[i] else 0.0 for i in range(7)]
+
+
+def daily_goal(rolled_history, iso_date):
+    """Gallons goal for iso_date: the same-weekday average over the 6 weeks
+    *before* it (the day itself excluded, so today's gallons never feed their
+    own goal). None when there is no history for that weekday yet."""
+    d = datetime.strptime(iso_date, "%Y-%m-%d").date()
+    avgs = weekday_averages(rolled_history, d - timedelta(days=1))
+    goal = avgs[d.weekday()]
+    return round(goal, 1) if goal > 0 else None
+
+
 def projected_month_gallons(rolled_history, iso_date):
     """Projected month-end gallons for the month containing iso_date:
     actual gallons through the selected date, plus a day-of-week average
@@ -137,16 +163,8 @@ def projected_month_gallons(rolled_history, iso_date):
     d = datetime.strptime(iso_date, "%Y-%m-%d").date()
     mo_start, mo_end, _ = month_range(iso_date)
     daily = rolled_history.groupby("date")["gallons"].sum()
-    data_min = rolled_history["date"].min() if len(rolled_history) else iso_date
     actual = float(sum(g for dt, g in daily.items() if mo_start <= dt <= iso_date))
-    sums, counts = [0.0] * 7, [0] * 7
-    for i in range(42):
-        day = d - timedelta(days=i)
-        if day.isoformat() < data_min:
-            continue  # don't count days before the file's history begins
-        sums[day.weekday()] += float(daily.get(day.isoformat(), 0.0))
-        counts[day.weekday()] += 1
-    avgs = [sums[i] / counts[i] if counts[i] else 0.0 for i in range(7)]
+    avgs = weekday_averages(rolled_history, d)
     end = datetime.strptime(mo_end, "%Y-%m-%d").date()
     proj, day = actual, d + timedelta(days=1)
     while day <= end:
