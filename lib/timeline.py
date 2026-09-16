@@ -190,6 +190,14 @@ def build_timeline(data, iso_date):
                 if ns_m is None or ne_m is None or ne_m <= ns_m:
                     continue
                 ndur = ne_m - ns_m
+                if nr["kind"] == "Terminal":
+                    # a manual terminal-load ticket (the feed missed it): drawn and
+                    # counted exactly like one from the delivery feed
+                    segs.append((ns_m, max(ndur, 2), "terminal",
+                                 f"<b>Terminal Load</b><br>{nr['start']} → {nr['end']} · {fmt_hmm(ndur)}"
+                                 + (f"<br>{nr['note']}" if nr["note"] else ""), 0))
+                    stop_ivals.append((ns_m, ne_m))
+                    continue
                 is_down = nr["kind"] == "Downtime"
                 segs.append((ns_m, ndur, "downtime" if is_down else "note",
                              f"<b>{'Downtime' if is_down else 'Note'}</b><br>"
