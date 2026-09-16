@@ -178,6 +178,7 @@ class UnifiedData:
     payroll: pd.DataFrame
     punches: pd.DataFrame
     customers: pd.DataFrame
+    notes: pd.DataFrame      # timeline notes: date, driver, start, end, kind, note
     meta: dict
     product_map: dict
     benchmarks: dict          # svcType -> minutes (float)
@@ -442,6 +443,21 @@ def load_unified(file_bytes: bytes) -> UnifiedData:
                           "downtime_start": clock_str(col(6)),
                           "downtime_end": clock_str(col(7)),
                           "downtime_note": cell_str(col(8))})
+        # Notes (timeline blocks added via the timeline-notes Cowork skill).
+        # Kind is "Note" or "Downtime"; older files have no sheet at all.
+        nrows = []
+        for raw in _sheet_lists(wb, "Notes"):
+            def col(i):
+                return raw[i] if i < len(raw) else None
+            date = extract_date_iso(col(0))
+            if not date or not cell_str(col(1)) or not clock_str(col(2)) or not clock_str(col(3)):
+                continue
+            nrows.append({"date": date, "driver": cell_str(col(1)),
+                          "start": clock_str(col(2)), "end": clock_str(col(3)),
+                          "kind": "Downtime" if cell_str(col(4)).lower() == "downtime" else "Note",
+                          "note": cell_str(col(5))})
+        notes = pd.DataFrame(nrows, columns=["date", "driver", "start", "end", "kind", "note"])
+
         payroll = pd.DataFrame(prows, columns=["date", "driver", "hours", "clock_in",
                                                "clock_out", "back_to_yard",
                                                "downtime_start", "downtime_end",
@@ -503,7 +519,7 @@ def load_unified(file_bytes: bytes) -> UnifiedData:
     driver_order = order or list(DRIVER_SENIORITY)
 
     data = UnifiedData(deliveries=deliveries, payroll=payroll, punches=punches,
-                       customers=customers, meta=meta, product_map=product_map,
+                       customers=customers, notes=notes, meta=meta, product_map=product_map,
                        benchmarks=benchmarks, shift_split_time=shift_split,
                        threshold=threshold, driver_order=driver_order)
     data.deliveries_no_fleet = deliveries[~deliveries["is_fleet"] & ~deliveries["is_terminal"]].reset_index(drop=True)

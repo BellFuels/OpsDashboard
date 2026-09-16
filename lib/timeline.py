@@ -19,7 +19,8 @@ COLORS = {
     "fleet": "#a569c9",
     "terminal": "#e6c33a",
     "yard": "#ff5b52",
-    "downtime": "#3fa0ff",
+    "downtime": "#000000",               # black, white duration text inside
+    "note": "#3fa0ff",                   # blue: a free-text timeline note
     "over": "#e5484d",                   # red: stop time beyond the site's historical average
 }
 DVIR_MINS = 20  # per pre/post-trip block; accounted in the summary, not drawn
@@ -98,6 +99,10 @@ def build_timeline(data, iso_date):
             # split, the gallons are shown on hover for context
             site_avg[(addr, stop)] = (mins.mean(), gal.mean() if len(gal) else None)
 
+    # timeline notes for the day (Notes sheet; empty for files that predate it)
+    notes_all = getattr(data, "notes", None)
+    notes_day = notes_all[notes_all["date"] == iso_date] if notes_all is not None and len(notes_all) else None
+
     drivers = []
     for name in data.driver_order:
         p = by_driver.get(name)
@@ -166,6 +171,24 @@ def build_timeline(data, iso_date):
             note = str(p.get("downtime_note", "") or "").strip()
             segs.append((ds_m, downtime, "downtime",
                          f"<b>{note or 'Downtime'}</b><br>{ds} → {de} · {fmt_hmm(downtime)}", 0))
+        # timeline notes (Notes sheet). A Note is a blue block that just carries its
+        # text on hover; a Downtime note is drawn black and counts toward the
+        # driver's downtime exactly like the Excel columns above, provided it sits
+        # inside the shift.
+        if notes_day is not None:
+            mine_n = notes_day[notes_day["driver"].str.lower() == name.lower()]
+            for _, nr in mine_n.iterrows():
+                ns_m = to_abs_mins(nr["start"], in_m)
+                ne_m = to_abs_mins(nr["end"], ns_m if ns_m is not None else in_m)
+                if ns_m is None or ne_m is None or ne_m <= ns_m:
+                    continue
+                ndur = ne_m - ns_m
+                is_down = nr["kind"] == "Downtime"
+                segs.append((ns_m, ndur, "downtime" if is_down else "note",
+                             f"<b>{'Downtime' if is_down else 'Note'}</b><br>"
+                             f"{nr['start']} → {nr['end']} · {fmt_hmm(ndur)}<br>{nr['note']}", 0))
+                if is_down and in_m <= ns_m < ne_m <= out_m:
+                    downtime = (downtime or 0) + ndur
         # travel-time gaps (≥30 min): from end of pre-trip DVIR, between stops,
         # to the return to the yard (or post-trip DVIR if no return entered).
         # Tracks the furthest end seen so far so overlapping/nested stops
@@ -242,9 +265,10 @@ def build_timeline(data, iso_date):
     nested = {d["name"]: nested_ids(d) for d in drivers}
 
     for kind, label in [("yard", "Back at Yard Time"), ("downtime", "Downtime"),
+                        ("note", "Note"),
                         ("delivery", "Stop time"), ("fleet", "Fleet Fuel"),
                         ("terminal", "Terminal Load"), ("over", "Over site avg")]:
-        ys, xs, bases, texts = [], [], [], []
+        ys, xs, bases, texts, durs = [], [], [], [], []
         for d in drivers:
             for seg in d["segments"]:
                 start, dur, k, txt, over = seg
@@ -266,13 +290,21 @@ def build_timeline(data, iso_date):
                 xs.append(ms(dur))
                 bases.append(dt(start))
                 texts.append(txt)
+                durs.append(dur)
         if not ys:
             continue
         # thin black border on each stop segment so back-to-back stops don't merge
         border = 1 if kind in ("delivery", "fleet", "terminal") else 0
+        extra = {}
+        if kind == "downtime":
+            # black block with the duration in white inside it
+            extra = dict(text=[fmt_hmm(v) for v in durs], textposition="inside",
+                         insidetextanchor="middle", constraintext="both",
+                         textfont=dict(color="#ffffff", size=11))
         fig.add_trace(go.Bar(y=ys, x=xs, base=bases, orientation="h", width=0.45,
                              marker=dict(color=COLORS[kind], line=dict(color="#000000", width=border)),
-                             name=label, hovertemplate="%{customdata}<extra></extra>", customdata=texts))
+                             name=label, hovertemplate="%{customdata}<extra></extra>", customdata=texts,
+                             **extra))
 
     # Nested stops get their own thin sub-lane just below the main stop bar
     # (offset past the 0.45-wide bars' ±0.225 extent, still inside the shift band).
