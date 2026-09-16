@@ -455,7 +455,7 @@ def load_unified(file_bytes: bytes) -> UnifiedData:
                 continue
             nrows.append({"date": date, "driver": cell_str(col(1)),
                           "start": clock_str(col(2)), "end": clock_str(col(3)),
-                          "kind": "Downtime" if cell_str(col(4)).lower() == "downtime" else "Note",
+                          "kind": {"downtime": "Downtime", "terminal": "Terminal"}.get(cell_str(col(4)).lower(), "Note"),
                           "note": cell_str(col(5))})
         notes = pd.DataFrame(nrows, columns=["date", "driver", "start", "end", "kind", "note"])
 

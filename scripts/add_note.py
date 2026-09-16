@@ -92,8 +92,8 @@ def validate(driver, date, start, end, text, kind, known):
     text = str(text or "").strip()
     if not text:
         raise ValueError("the note text is empty")
-    if kind not in (None, "", "Note", "Downtime"):
-        raise ValueError(f"kind must be Note or Downtime, not '{kind}'")
+    if kind not in (None, "", "Note", "Downtime", "Terminal"):
+        raise ValueError(f"kind must be Note, Downtime or Terminal, not '{kind}'")
     return {"Date": iso, "Driver": drv, "Start": s, "End": e,
             "Kind": kind or note_kind(text), "Note": text}
 
@@ -190,7 +190,7 @@ def main():
     ap.add_argument("--start", help="e.g. '2:15 PM'")
     ap.add_argument("--end", help="e.g. '2:45 PM'")
     ap.add_argument("--note", help="Free text shown on hover")
-    ap.add_argument("--kind", choices=["Note", "Downtime"], help="Override the automatic tag")
+    ap.add_argument("--kind", choices=["Note", "Downtime", "Terminal"], help="Override the automatic tag")
     ap.add_argument("--yard", action="store_true",
                     help="Record a yard arrival (--start only) instead of a note; sets BackToYard")
     ap.add_argument("--queue", action="store_true",

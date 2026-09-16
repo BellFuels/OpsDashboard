@@ -69,9 +69,18 @@ NOTES_COLUMNS = ["Date", "Driver", "Start", "End", "Kind", "Note"]
 DOWNTIME_RE = re.compile(r"\bdown\s?time\b", re.I)
 
 
+TERMINAL_NOTE_RE = re.compile(r"\bterminal\b", re.I)
+
+
 def note_kind(text):
-    """"Downtime" when the note mentions downtime (or "down time"), else "Note"."""
-    return "Downtime" if DOWNTIME_RE.search(str(text or "")) else "Note"
+    """"Downtime" when the note mentions downtime (or "down time"); "Terminal" when it
+    mentions the terminal (a manual terminal-load ticket the feed missed); else "Note"."""
+    t = str(text or "")
+    if DOWNTIME_RE.search(t):
+        return "Downtime"
+    if TERMINAL_NOTE_RE.search(t):
+        return "Terminal"
+    return "Note"
 
 EXCEL_EPOCH_OFFSET = 25569  # days between 1899-12-30 and 1970-01-01
 
