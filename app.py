@@ -125,7 +125,7 @@ side.caption("🔒 Data lives in this session's memory only. Closing the tab (or
 
 # ─── Main: one view at a time ────────────────────────────────────────────────
 
-h1, h2 = st.columns([1.1, 2.4])
+h1, h2 = st.columns([1.6, 2.4])  # room for "Daily Route Performance" on one line
 view = h2.segmented_control("View", list(VIEWS), default="Quick View", key="view",
                             label_visibility="collapsed") or "Quick View"
 h1.markdown(f"<div class='view-title'>{view}<small>{day_label(sel_date)}</small></div>",

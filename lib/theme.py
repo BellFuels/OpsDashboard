@@ -71,7 +71,8 @@ html, body, .stApp, [class*="css"] {{
     font-family: {BODY};
     font-variant-numeric: tabular-nums;
 }}
-[data-testid="stMainBlockContainer"] {{ padding-top: 1.6rem; max-width: 1500px; }}
+/* enough top padding to clear Streamlit's transparent header bar */
+[data-testid="stMainBlockContainer"] {{ padding-top: 3.4rem; max-width: 1500px; }}
 h1, h2, h3, h4, h5, h6 {{ font-family: {DISPLAY}; font-weight: 600; letter-spacing: 0; }}
 
 /* ── Sidebar brand ── */

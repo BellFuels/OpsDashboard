@@ -35,7 +35,7 @@ def render(data, rd):
         st.warning("Gal/hr unavailable — this day's rows lack clock timestamps.")
     elif gal_hr:
         baseline = calc.gal_hr_baseline(data.deliveries_no_fleet)
-        chips = st.columns(min(len(gal_hr), 8))
+        chips = st.columns(min(len(gal_hr), 6))  # 8 across truncated "1,234 gal/hr" and the delta
         for i, (drv, gh) in enumerate(sorted(gal_hr.items())):
             avg, days = baseline.get(drv, (None, 0))
             delta = f"{round((gh - avg) / avg * 100):+d}% vs 30-day avg" if avg and days >= 5 else None
