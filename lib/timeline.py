@@ -1,7 +1,7 @@
 """
 timeline.py — the Quick View shift timeline as a Plotly figure.
-Port of ShiftTimelinePanel from route_tracker_v2.html (read-only: fixed 15-min
-DVIR blocks, no custom block editing).
+Port of ShiftTimelinePanel from route_tracker_v2.html (read-only). DVIR is the
+Meta sheet's dvir_mins before and after each shift; it is counted, not drawn.
 """
 
 import re
@@ -10,20 +10,10 @@ from datetime import datetime, timedelta
 import pandas as pd
 import plotly.graph_objects as go
 
+from lib import theme
 from lib.parsing import fmt_hmm
 
-COLORS = {
-    "shift": "rgba(52,209,127,0.20)",   # light-green fill for the full shift span
-    "shift_border": "#000000",           # black outline around the shift bar
-    "delivery": "#1c7d47",               # dark green for delivery (stop) segments
-    "fleet": "#a569c9",
-    "terminal": "#e6c33a",
-    "yard": "#FFD60A",                   # yellow: Guaranteed Time (yard arrival + allowance -> clock-out)
-    "downtime": "#000000",               # black, white duration text inside
-    "note": "#3fa0ff",                   # blue: a free-text timeline note
-    "over": "#e5484d",                   # red: stop time beyond the site's historical average
-}
-DVIR_MINS = 20  # default per pre/post-trip block; the Meta sheet's dvir_mins overrides
+COLORS = theme.TIMELINE
 
 
 def fmt_clock(mins):
@@ -101,11 +91,10 @@ def build_timeline(data, iso_date):
 
     # post-trip allowance: the yard block (Guaranteed Time) starts this many minutes
     # after the driver returns to the yard. Same figure as each DVIR block.
-    dvir_each = int(getattr(data, "dvir_mins", DVIR_MINS))
+    dvir_each = int(data.dvir_mins)
 
     # timeline notes for the day (Notes sheet; empty for files that predate it)
-    notes_all = getattr(data, "notes", None)
-    notes_day = notes_all[notes_all["date"] == iso_date] if notes_all is not None and len(notes_all) else None
+    notes_day = data.notes[data.notes["date"] == iso_date] if len(data.notes) else None
 
     drivers = []
     for name in data.driver_order:
@@ -279,6 +268,8 @@ def build_timeline(data, iso_date):
         # shift). Skip its hover entirely — the punch times it showed are already
         # in the summary table's "Punches" column below the chart.
         hoverinfo="skip",
+        # self-explanatory (it is the whole row); keeps the legend to what carries judgment
+        showlegend=False,
     ))
     ms = lambda m: timedelta(minutes=m).total_seconds() * 1000
     STOP_KINDS = ("delivery", "fleet", "terminal")
@@ -340,6 +331,8 @@ def build_timeline(data, iso_date):
             # that also painted the stop over them; zorder lifts them on top
             # without changing hover priority.
             extra["zorder"] = 10
+        if kind == "note":
+            extra["showlegend"] = False  # explained in "How to read this" instead
         if kind == "downtime":
             # black block with the duration in white inside it
             extra.update(text=[fmt_hmm(v) for v in durs], textposition="inside",
@@ -383,31 +376,32 @@ def build_timeline(data, iso_date):
         for mid, gap in d["gaps"]:
             fig.add_annotation(x=dt(mid), y=d["name"], text=fmt_hmm(gap),
                                showarrow=False,
-                               font=dict(size=10, color="#5a6f62"))
+                               font=dict(size=10, color=theme.PANEL_MUTED))
     # Off-white panel behind the bars so each driver's colored timeline stands out
     # against the dark card. Fills both the plot area and the paper (so the light
     # window runs from the top down past the x-axis time labels).
-    PANEL = "#f5f3ec"
     fig.update_layout(
         barmode="overlay", height=110 + 52 * len(drivers),
-        font=dict(color="#28352e"),
+        font=dict(color=theme.PANEL_INK, family=theme.BODY),
         yaxis=dict(categoryorder="array", categoryarray=list(reversed(names)), title=None,
                    automargin=True),
-        xaxis=dict(type="date", tickformat="%-I:%M %p", title=None, gridcolor="#dce0da"),
-        plot_bgcolor=PANEL, paper_bgcolor=PANEL,
+        xaxis=dict(type="date", tickformat="%-I:%M %p", title=None, gridcolor=theme.PANEL_GRID),
+        plot_bgcolor=theme.PANEL, paper_bgcolor=theme.PANEL,
         legend=dict(orientation="h", yanchor="top", y=-0.08),
         margin=dict(l=90, r=10, t=10, b=10), bargap=0.25,
         # "closest" + a generous pixel radius so a short stop can be grabbed from
         # just outside its narrow bar
         hovermode="closest", hoverdistance=40,
-        hoverlabel=dict(font_size=15, bgcolor="#0f1613", bordercolor="#2fbf71",
-                        font=dict(color="#e5efe9"), align="left"),
+        hoverlabel=dict(font_size=15, bgcolor=theme.BG, bordercolor=theme.GREEN,
+                        font=dict(color=theme.INK), align="left"),
     )
 
+    # DVIR is the same for every driver, so it is explained above the table
+    # ("How to read this") rather than repeated as a column.
     summary = pd.DataFrame([{
         "Driver": d["name"], "Punches": f"{d['clock_in']} – {d['clock_out']}",
         "Shift": fmt_hmm(d["shift"]), "Stop Time": fmt_hmm(d["stop_time"]),
-        "DVIR": fmt_hmm(d["dvir"]), "Unaccounted": fmt_hmm(d["unaccounted"]),
+        "Unaccounted": fmt_hmm(d["unaccounted"]),
         "Back to Yard": d["back_to_yard"] or "—",
         "Guaranteed Time": fmt_hmm(d["guaranteed"]) if d["guaranteed"] is not None else "—",
         "Downtime": fmt_hmm(d["downtime"]) if d["downtime"] is not None else "—",

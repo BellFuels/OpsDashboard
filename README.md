@@ -1,10 +1,11 @@
-# Route Tracker — Streamlit Edition
+# EBDB — Everyday Bell Dashboard
 
-Web version of the Bell Fuels route efficiency tracker. Users upload the daily
-unified workbook (`Bell_Unified_<date>.xlsx`, produced by
-`scripts/build_unified.py` and emailed each day) and get: Quick View with
-shift timeline, Daily Route Performance, Driver comparison, and a read-only
-Payroll & HOS grid.
+The Bell Fuels operations dashboard. Users upload the daily unified workbook
+(`Bell_Unified_<date>.xlsx`, produced by `scripts/build_unified.py` and
+emailed each day) and get five views: Quick View (gallons vs goal, at-a-glance
+table, shift timeline), Daily Route Performance, Stop Averages, Drivers, and a
+read-only Payroll & HOS grid. One date, picked in the sidebar, drives every
+view; the file's settings sit under "About this file" in the sidebar.
 
 **This repo contains code only. No delivery, customer, or payroll data may
 ever be committed** — see Security below.
@@ -62,8 +63,8 @@ there is no separate publish step.
    git pull --ff-only origin main
    ```
 
-2. **Edit and test locally.** A change under `lib/` needs a server restart — a
-   browser reload only re-runs `app.py`, not the cached imports.
+2. **Edit and test locally.** A change under `lib/` or `views/` needs a server
+   restart — a browser reload only re-runs `app.py`, not the cached imports.
 3. **Run the data check** from the Security checklist below. Output must be empty.
 4. **Commit and push.** This triggers the redeploy:
 
@@ -113,7 +114,9 @@ contents happen to match.
 
 | Path | Purpose |
 |---|---|
-| `app.py` | Streamlit app — sidebar upload gate + five tabs |
+| `app.py` | Sidebar (upload gate, shared date, file settings) and the view switch |
+| `views/*.py` | One module per view, each exposing `render(data, sel_date)`; only the selected view runs |
+| `lib/theme.py` | The palette, fonts, Plotly defaults and the app's CSS — every color comes from here |
 | `lib/parsing.py` | Reads the unified workbook from memory; schema validation |
 | `lib/calc.py` | Roll-ups, averages, deviations, gal/hr, payroll grid (ported from the browser app) |
 | `lib/timeline.py` | Plotly shift-timeline figure |
@@ -121,10 +124,11 @@ contents happen to match.
 
 ## Known differences from the desktop (HTML) app
 
-- Shift timeline is read-only: DVIR is shown as fixed 15-minute blocks; no
-  custom time blocks (those relied on browser-local storage).
+- Shift timeline is read-only: DVIR (`dvir_mins` on the Meta sheet, before and
+  after each shift) is counted but not drawn; notes and downtime come from the
+  file, not from browser-local storage.
 - Nothing persists between sessions — by design (see Security).
 - The report table shows all columns (no collapsible groups); per-driver
   totals live in an expander.
-- The deviation-threshold slider is session-only, seeded from the file's Meta
-  sheet.
+- The deviation-threshold slider (next to the Outliers toggle on Daily Route
+  Performance) is session-only, seeded from the file's Meta sheet.
