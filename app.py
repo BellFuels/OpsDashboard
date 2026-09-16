@@ -332,8 +332,8 @@ with tab_qv:
 
     def metrics_card(col, title, subtitle, rolled, pay_rows, note_rows=None):
         m = calc.quick_view_service_metrics(rolled)
-        yard_tot, down_tot = calc.yard_downtime_totals(pay_rows, note_rows)
-        rows = [("Back At Yard", fmt_hmm(yard_tot) if yard_tot else "—"),
+        yard_tot, down_tot = calc.yard_downtime_totals(pay_rows, note_rows, data.dvir_mins)
+        rows = [("Guaranteed Time", fmt_hmm(yard_tot) if yard_tot else "—"),
                 ("Downtime", fmt_hmm(down_tot) if down_tot else "—"),
                 ("Fleet avg Min/Unit", fmt_hhmmss(m["fleet_min_unit"]) if m["fleet_min_unit"] else "—"),
                 ("Fleet avg Gal/Unit", f"{m['fleet_gal_unit']:.2f} gal/unit" if m["fleet_gal_unit"] else "—"),
@@ -677,6 +677,7 @@ with tab_settings:
     i1, i2 = st.columns(2)
     with i1:
         st.markdown(f"**Shift split time:** `{data.shift_split_time}`  \n"
+                    f"**Post-trip allowance (DVIR):** `{data.dvir_mins}` min — Guaranteed Time starts this long after yard arrival  \n"
                     f"**Data window:** `{data.meta.get('window_days', '180')}` days  \n"
                     f"**Customer list:** `{len(data.customers):,}` customers")
     with i2:

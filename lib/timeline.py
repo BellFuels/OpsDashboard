@@ -18,12 +18,12 @@ COLORS = {
     "delivery": "#1c7d47",               # dark green for delivery (stop) segments
     "fleet": "#a569c9",
     "terminal": "#e6c33a",
-    "yard": "#ff5b52",
+    "yard": "#FFD60A",                   # yellow: Guaranteed Time (yard arrival + allowance -> clock-out)
     "downtime": "#000000",               # black, white duration text inside
     "note": "#3fa0ff",                   # blue: a free-text timeline note
     "over": "#e5484d",                   # red: stop time beyond the site's historical average
 }
-DVIR_MINS = 20  # per pre/post-trip block; accounted in the summary, not drawn
+DVIR_MINS = 20  # default per pre/post-trip block; the Meta sheet's dvir_mins overrides
 
 
 def fmt_clock(mins):
@@ -99,6 +99,10 @@ def build_timeline(data, iso_date):
             # split, the gallons are shown on hover for context
             site_avg[(addr, stop)] = (mins.mean(), gal.mean() if len(gal) else None)
 
+    # post-trip allowance: the yard block (Guaranteed Time) starts this many minutes
+    # after the driver returns to the yard. Same figure as each DVIR block.
+    dvir_each = int(getattr(data, "dvir_mins", DVIR_MINS))
+
     # timeline notes for the day (Notes sheet; empty for files that predate it)
     notes_all = getattr(data, "notes", None)
     notes_day = notes_all[notes_all["date"] == iso_date] if notes_all is not None and len(notes_all) else None
@@ -161,6 +165,9 @@ def build_timeline(data, iso_date):
         b2y = p.get("back_to_yard", "")
         b2y_m = to_abs_mins(b2y, in_m)
         yard = out_m - b2y_m if b2y_m is not None and in_m <= b2y_m <= out_m else None
+        # Guaranteed Time: what is left between the post-trip allowance and clock-out.
+        # Clocking out within the allowance leaves none (never negative).
+        guaranteed = max(0, yard - dvir_each) if yard is not None else None
         # downtime block (manual DowntimeStart/DowntimeEnd, must sit inside the shift)
         ds, de = p.get("downtime_start", ""), p.get("downtime_end", "")
         ds_m = to_abs_mins(ds, in_m)
@@ -213,8 +220,8 @@ def build_timeline(data, iso_date):
         # don't hide or misplace a gap.
         gaps = []
         if segs:
-            cur_end = in_m + DVIR_MINS
-            shift_end = b2y_m if yard is not None else out_m - DVIR_MINS
+            cur_end = in_m + dvir_each
+            shift_end = b2y_m if yard is not None else out_m - dvir_each
             for s in sorted(segs, key=lambda x: x[0]):
                 gap = s[0] - cur_end
                 if gap >= 30:
@@ -223,23 +230,28 @@ def build_timeline(data, iso_date):
             gap = shift_end - cur_end
             if gap >= 30:
                 gaps.append((cur_end + gap / 2, gap))
-        if yard:
-            segs.append((b2y_m, yard, "yard",
-                         f"<b>Back at yard</b><br>{b2y} → {p['clock_out']} · {fmt_hmm(yard)}", 0))
+        if guaranteed:
+            # drawn from the end of the allowance, not from arrival: the first
+            # dvir_each minutes are expected post-trip work and stay unshaded
+            segs.append((b2y_m + dvir_each, guaranteed, "yard",
+                         f"<b>Guaranteed Time</b><br>back at yard {b2y} · +{dvir_each} min post-trip → "
+                         f"{p['clock_out']} · <b>{fmt_hmm(guaranteed)}</b>", 0))
         shift = out_m - in_m
         # Time in stops = the union of every ticket's interval, clipped to the
         # punch window: overlapping tickets count once, and minutes recorded
         # outside the clocked shift aren't part of it. Keeps Stop % a true share
         # of the shift.
         stop_time = merge_minutes((max(s0, in_m), min(e0, out_m)) for s0, e0 in stop_ivals)
-        dvir = DVIR_MINS * 2
-        # yard time overlaps the post-trip DVIR block; don't double-count it
-        unacc = max(0, shift - stop_time - dvir - max(0, (yard or 0) - DVIR_MINS)
+        dvir = dvir_each * 2
+        # the post-trip DVIR block is already inside the yard time; Guaranteed Time
+        # is the part beyond it, so this doesn't double-count the allowance
+        unacc = max(0, shift - stop_time - dvir - (guaranteed or 0)
                     - (downtime or 0))
         drivers.append({"name": name, "in_m": in_m, "out_m": out_m, "clock_in": p["clock_in"],
                         "clock_out": p["clock_out"], "segments": segs, "gaps": gaps, "shift": shift,
                         "stop_time": stop_time, "dvir": dvir, "unaccounted": unacc,
-                        "back_to_yard": b2y, "yard_time": yard, "downtime": downtime,
+                        "back_to_yard": b2y, "yard_time": yard, "guaranteed": guaranteed,
+                        "downtime": downtime,
                         "stop_pct": round(stop_time / shift * 100, 1) if shift > 0 else None})
     if not drivers:
         return None, None, None
@@ -282,7 +294,7 @@ def build_timeline(data, iso_date):
 
     nested = {d["name"]: nested_ids(d) for d in drivers}
 
-    for kind, label in [("yard", "Back at Yard Time"), ("downtime", "Downtime"),
+    for kind, label in [("yard", "Guaranteed Time"), ("downtime", "Downtime"),
                         ("note", "Note"),
                         ("delivery", "Stop time"), ("fleet", "Fleet Fuel"),
                         ("terminal", "Terminal Load"), ("over", "Over site avg")]:
@@ -389,7 +401,7 @@ def build_timeline(data, iso_date):
         "Shift": fmt_hmm(d["shift"]), "Stop Time": fmt_hmm(d["stop_time"]),
         "DVIR": fmt_hmm(d["dvir"]), "Unaccounted": fmt_hmm(d["unaccounted"]),
         "Back to Yard": d["back_to_yard"] or "—",
-        "Yard Time": fmt_hmm(d["yard_time"]) if d["yard_time"] is not None else "—",
+        "Guaranteed Time": fmt_hmm(d["guaranteed"]) if d["guaranteed"] is not None else "—",
         "Downtime": fmt_hmm(d["downtime"]) if d["downtime"] is not None else "—",
         "Stop %": f"{d['stop_pct']}%" if d["stop_pct"] is not None else "—",
     } for d in drivers])
