@@ -189,6 +189,24 @@ def build_timeline(data, iso_date):
                              f"{nr['start']} → {nr['end']} · {fmt_hmm(ndur)}<br>{nr['note']}", 0))
                 if is_down and in_m <= ns_m < ne_m <= out_m:
                     downtime = (downtime or 0) + ndur
+        # A note or downtime that overlaps a stop (a regen during a 3-hour yard
+        # visit) is painted on top of it via zorder, but Plotly's hover follows the
+        # same order and hands the tie to the stop. Fold the note's text into that
+        # stop's tooltip so hovering the black/blue block still shows it.
+        overlays = [o for o in segs if o[2] in ("note", "downtime")]
+        if overlays:
+            merged = []
+            for sg in segs:
+                if sg[2] in ("delivery", "fleet", "terminal"):
+                    extra = ""
+                    for o in overlays:
+                        if o[0] < sg[0] + sg[1] and o[0] + o[1] > sg[0]:
+                            line = o[3].replace("<br>", " · ", 1).replace("<br>", ": ", 1)
+                            extra += "<br>▸ " + line
+                    if extra:
+                        sg = (sg[0], sg[1], sg[2], sg[3] + extra, sg[4])
+                merged.append(sg)
+            segs = merged
         # travel-time gaps (≥30 min): from end of pre-trip DVIR, between stops,
         # to the return to the yard (or post-trip DVIR if no return entered).
         # Tracks the furthest end seen so far so overlapping/nested stops
@@ -296,9 +314,15 @@ def build_timeline(data, iso_date):
         # thin black border on each stop segment so back-to-back stops don't merge
         border = 1 if kind in ("delivery", "fleet", "terminal") else 0
         extra = {}
+        if kind in ("downtime", "note"):
+            # Notes and downtime can overlap a stop (a regen during a 3-hour yard
+            # visit). They sit early in trace order so they win the hover tie, but
+            # that also painted the stop over them; zorder lifts them on top
+            # without changing hover priority.
+            extra["zorder"] = 10
         if kind == "downtime":
             # black block with the duration in white inside it
-            extra = dict(text=[fmt_hmm(v) for v in durs], textposition="inside",
+            extra.update(text=[fmt_hmm(v) for v in durs], textposition="inside",
                          insidetextanchor="middle", constraintext="both",
                          textfont=dict(color="#ffffff", size=11))
         fig.add_trace(go.Bar(y=ys, x=xs, base=bases, orientation="h", width=0.45,
