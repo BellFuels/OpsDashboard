@@ -62,6 +62,16 @@ MANUAL_TIME_COLUMNS = ("BackToYard", "DowntimeStart", "DowntimeEnd")
 MANUAL_PAYROLL_COLUMNS = MANUAL_TIME_COLUMNS + ("DowntimeNote",)
 PUNCH_COLUMNS = ["Date", "Driver", "Seq", "In", "Out"]
 CUSTOMER_COLUMNS = ["Name", "Account", "CustType", "SvcType", "Street", "City", "County", "FullAddress"]
+# Timeline notes: free-text blocks on a driver's day, added via the add-timeline-note
+# Cowork skill (scripts/add_note.py). Kind is "Note" or "Downtime"; a Downtime note
+# counts toward the driver's downtime exactly like the Payroll sheet's manual columns.
+NOTES_COLUMNS = ["Date", "Driver", "Start", "End", "Kind", "Note"]
+DOWNTIME_RE = re.compile(r"\bdown\s?time\b", re.I)
+
+
+def note_kind(text):
+    """"Downtime" when the note mentions downtime (or "down time"), else "Note"."""
+    return "Downtime" if DOWNTIME_RE.search(str(text or "")) else "Note"
 
 EXCEL_EPOCH_OFFSET = 25569  # days between 1899-12-30 and 1970-01-01
 
@@ -998,7 +1008,7 @@ def blank_unified():
     meta = {"schema_version": str(SCHEMA_VERSION), "window_days": str(DEFAULT_WINDOW_DAYS),
             "shift_split_time": "12:00", "threshold": "20",
             "driver_order": ",".join(DRIVER_SENIORITY)}
-    return {"deliveries": [], "payroll": [], "punches": [], "customers": [],
+    return {"deliveries": [], "payroll": [], "punches": [], "customers": [], "notes": [],
             "name_map": dict(DEFAULT_NAME_MAP), "meta": meta}
 
 
@@ -1021,7 +1031,7 @@ def read_unified(path):
                 v = raw[j] if j < len(raw) else None
                 if col in ("Date",):
                     row[col] = extract_date_iso(v)
-                elif col in MANUAL_TIME_COLUMNS:
+                elif col in MANUAL_TIME_COLUMNS or col in ("Start", "End"):
                     row[col] = clock_text(v)
                 elif col in ("Arrival", "Departure"):
                     row[col] = arrival_to_text(v)
@@ -1039,6 +1049,7 @@ def read_unified(path):
     data["payroll"] = sheet_rows("Payroll", PAYROLL_COLUMNS)
     data["punches"] = sheet_rows("Punches", PUNCH_COLUMNS)
     data["customers"] = sheet_rows("Customers", CUSTOMER_COLUMNS)
+    data["notes"] = sheet_rows("Notes", NOTES_COLUMNS)
     if "NameMap" in wb.sheetnames:
         it = wb["NameMap"].iter_rows(values_only=True)
         next(it, None)
@@ -1080,6 +1091,8 @@ def write_unified(path, data, build_date):
     add_sheet("Payroll", PAYROLL_COLUMNS, data["payroll"], key=lambda r: (r["Date"], r["Driver"]))
     add_sheet("Punches", PUNCH_COLUMNS, data["punches"], key=lambda r: (r["Date"], r["Driver"], r["Seq"]))
     add_sheet("Customers", CUSTOMER_COLUMNS, data["customers"], key=lambda r: r["Name"])
+    add_sheet("Notes", NOTES_COLUMNS, data.get("notes", []),
+              key=lambda r: (r["Date"], r["Driver"], r["Start"]))
 
     nm = wb.create_sheet("NameMap")
     nm.append(["PayrollName", "DisplayName"])
@@ -1354,6 +1367,7 @@ def main():
     data["deliveries"] = prune_window(data["deliveries"], build_date, window_days)
     data["payroll"] = prune_window(data["payroll"], build_date, window_days)
     data["punches"] = prune_window(data["punches"], build_date, window_days)
+    data["notes"] = prune_window(data.get("notes", []), build_date, window_days)
     if before != len(data["deliveries"]):
         print(f"\nWindow trim: dropped {before - len(data['deliveries'])} delivery rows "
               f"older than {window_days} days")

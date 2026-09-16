@@ -107,11 +107,14 @@ def shift_split_gallons(raw_day, split_hhmm, pay_day=None):
     return round(shift1, 1), round(shift2, 1), round(no_time_gal, 1), no_time_n
 
 
-def yard_downtime_totals(pay_rows):
+def yard_downtime_totals(pay_rows, notes=None):
     """Total Back-at-Yard minutes and Downtime minutes across payroll rows,
-    validated against each row's punch window (same rules as the timeline)."""
+    validated against each row's punch window (same rules as the timeline).
+    Downtime notes from the Notes sheet count too, when they sit inside that
+    driver's shift on that date — the same test the timeline applies."""
     from lib.timeline import to_abs_mins
     yard_tot = down_tot = 0
+    shifts = {}
     for _, p in pay_rows.iterrows():
         in_m = to_abs_mins(p["clock_in"], None)
         if in_m is None:
@@ -119,6 +122,7 @@ def yard_downtime_totals(pay_rows):
         out_m = to_abs_mins(p["clock_out"], in_m)
         if out_m is None:
             continue
+        shifts[(p["date"], str(p["driver"]).lower())] = (in_m, out_m)
         b2y_m = to_abs_mins(p.get("back_to_yard", ""), in_m)
         if b2y_m is not None and in_m <= b2y_m <= out_m:
             yard_tot += out_m - b2y_m
@@ -126,6 +130,16 @@ def yard_downtime_totals(pay_rows):
         de_m = to_abs_mins(p.get("downtime_end", ""), ds_m if ds_m is not None else in_m)
         if ds_m is not None and de_m is not None and in_m <= ds_m < de_m <= out_m:
             down_tot += de_m - ds_m
+    if notes is not None and len(notes):
+        for _, n in notes[notes["kind"] == "Downtime"].iterrows():
+            sh = shifts.get((n["date"], str(n["driver"]).lower()))
+            if not sh:
+                continue
+            in_m, out_m = sh
+            ns_m = to_abs_mins(n["start"], in_m)
+            ne_m = to_abs_mins(n["end"], ns_m if ns_m is not None else in_m)
+            if ns_m is not None and ne_m is not None and in_m <= ns_m < ne_m <= out_m:
+                down_tot += ne_m - ns_m
     return yard_tot, down_tot
 
 

@@ -330,9 +330,9 @@ with tab_qv:
         st.caption(f"⚠ {no_time_n} stop(s) with no punch data and no arrival time "
                    f"({no_time_gal:,.1f} gal) counted into Shift 1.")
 
-    def metrics_card(col, title, subtitle, rolled, pay_rows):
+    def metrics_card(col, title, subtitle, rolled, pay_rows, note_rows=None):
         m = calc.quick_view_service_metrics(rolled)
-        yard_tot, down_tot = calc.yard_downtime_totals(pay_rows)
+        yard_tot, down_tot = calc.yard_downtime_totals(pay_rows, note_rows)
         rows = [("Back At Yard", fmt_hmm(yard_tot) if yard_tot else "—"),
                 ("Downtime", fmt_hmm(down_tot) if down_tot else "—"),
                 ("Fleet avg Min/Unit", fmt_hhmmss(m["fleet_min_unit"]) if m["fleet_min_unit"] else "—"),
@@ -348,10 +348,13 @@ with tab_qv:
     st.markdown("##### Service-type averages")
     week_pay = data.payroll[(data.payroll["date"] >= wk_start) & (data.payroll["date"] <= wk_end)]
     month_pay = data.payroll[(data.payroll["date"] >= mo_start) & (data.payroll["date"] <= mo_end)]
+    notes_day = data.notes[data.notes["date"] == qd]
+    notes_week = data.notes[(data.notes["date"] >= wk_start) & (data.notes["date"] <= wk_end)]
+    notes_month = data.notes[(data.notes["date"] >= mo_start) & (data.notes["date"] <= mo_end)]
     cc1, cc2, cc3 = st.columns(3)
-    metrics_card(cc1, "Selected day", iso_to_mdy(qd), day_rolled, pay_day)
-    metrics_card(cc2, "Week", wk_label, week_rolled, week_pay)
-    metrics_card(cc3, "Month", mo_label, month_rolled, month_pay)
+    metrics_card(cc1, "Selected day", iso_to_mdy(qd), day_rolled, pay_day, notes_day)
+    metrics_card(cc2, "Week", wk_label, week_rolled, week_pay, notes_week)
+    metrics_card(cc3, "Month", mo_label, month_rolled, month_pay, notes_month)
 
     st.markdown("##### Shift timeline")
     st.caption("Shift spans from payroll punches; stops from delivery history. "
