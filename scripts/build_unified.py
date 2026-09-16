@@ -1006,7 +1006,7 @@ def parse_payroll_sheet(path, name_map):
 
 def blank_unified():
     meta = {"schema_version": str(SCHEMA_VERSION), "window_days": str(DEFAULT_WINDOW_DAYS),
-            "shift_split_time": "12:00", "threshold": "20",
+            "shift_split_time": "12:00", "threshold": "20", "dvir_mins": "20",
             "driver_order": ",".join(DRIVER_SENIORITY)}
     return {"deliveries": [], "payroll": [], "punches": [], "customers": [], "notes": [],
             "name_map": dict(DEFAULT_NAME_MAP), "meta": meta}
@@ -1379,6 +1379,10 @@ def main():
         sys.exit(1)
     data["meta"]["schema_version"] = str(SCHEMA_VERSION)
     data["meta"]["build_date"] = build_date
+    # post-trip allowance (minutes): Guaranteed Time on the timeline starts this
+    # long after a driver's BackToYard time; also each DVIR block. Editable in
+    # the Meta sheet; surfaced here so files built before it existed gain the row.
+    data["meta"].setdefault("dvir_mins", "20")
     data["meta"]["date_min"] = dates[0]
     data["meta"]["date_max"] = dates[-1]
     data["meta"]["window_days"] = str(window_days)

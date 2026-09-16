@@ -19,6 +19,11 @@ only enter the unified file at the NEXT morning's build:
   # next morning, after build_unified.py: apply everything queued
   python3 scripts/add_note.py --apply-queue
 
+Yard arrival (sets BackToYard on the Payroll sheet; Guaranteed Time runs from that
+time plus the post-trip allowance to clock-out):
+
+  python3 scripts/add_note.py --queue --yard --driver Vicente --date 9/14/2026 --start "11:30 PM"
+
 Also:
   python3 scripts/add_note.py --list [--date 9/9/2026] [--driver Brett] [--pending]
   python3 scripts/add_note.py --remove --driver Brett --date 9/9/2026 --start "2:15 PM" [--pending]
@@ -123,7 +128,36 @@ def shift_warning(row, payroll):
     return None
 
 
+def validate_yard(driver, date, start, known):
+    """Normalise a yard-arrival entry or raise ValueError."""
+    drv = resolve_driver(driver, known)
+    if not drv:
+        raise ValueError(f"unknown driver '{driver}'. Known: {', '.join(known)}")
+    iso = extract_date_iso(date)
+    if not iso:
+        raise ValueError(f"'{date}' isn't a date like 9/14/2026")
+    s = clock_text(start)
+    if to_mins(s) is None:
+        raise ValueError(f"start '{start}' isn't a time like '11:30 PM'")
+    return {"Date": iso, "Driver": drv, "Start": s, "End": s, "Kind": "Yard", "Note": ""}
+
+
+def apply_yard(row, payroll):
+    """Set BackToYard on the matching payroll row. Returns the previous value
+    ('' if none) or raises ValueError when there is no punch row yet."""
+    p = next((r for r in payroll if r.get("Date") == row["Date"]
+              and str(r.get("Driver", "")).lower() == row["Driver"].lower()), None)
+    if not p:
+        raise ValueError(f"no payroll row for {row['Driver']} on {row['Date']} yet - "
+                         f"drop that day's payroll PDF and rebuild first")
+    prev = p.get("BackToYard") or ""
+    p["BackToYard"] = row["Start"]
+    return prev
+
+
 def describe(row):
+    if row.get("Kind") == "Yard":
+        return f"[Yard] {row['Driver']} {row['Date']} back at yard {row['Start']}"
     mins = to_mins(row["End"]) - to_mins(row["Start"])
     return (f"[{row['Kind']}] {row['Driver']} {row['Date']} {row['Start']} -> {row['End']} "
             f"({mins // 60}:{mins % 60:02d}) - {row['Note']}")
@@ -157,6 +191,8 @@ def main():
     ap.add_argument("--end", help="e.g. '2:45 PM'")
     ap.add_argument("--note", help="Free text shown on hover")
     ap.add_argument("--kind", choices=["Note", "Downtime"], help="Override the automatic tag")
+    ap.add_argument("--yard", action="store_true",
+                    help="Record a yard arrival (--start only) instead of a note; sets BackToYard")
     ap.add_argument("--queue", action="store_true",
                     help="Queue the note for the next build instead of writing now")
     ap.add_argument("--apply-queue", action="store_true",
@@ -179,7 +215,8 @@ def main():
         return
     if args.queue:
         try:
-            row = validate(args.driver, args.date, args.start, args.end, args.note, args.kind, known)
+            row = (validate_yard(args.driver, args.date, args.start, known) if args.yard
+                   else validate(args.driver, args.date, args.start, args.end, args.note, args.kind, known))
         except ValueError as e:
             sys.exit(f"ERROR: {e}")
         row["captured_at"] = datetime.now().strftime("%Y-%m-%d %H:%M")
@@ -219,8 +256,16 @@ def main():
             print("Queue is empty - nothing to apply.")
             return
         applied, failed = [], []
+        yard_prev = {}
         for r in rows:
             try:
+                if r.get("Kind") == "Yard":
+                    row = validate_yard(r["Driver"], r["Date"], r["Start"], known)
+                    prev = apply_yard(row, data.get("payroll", []))
+                    if prev and to_mins(prev) != to_mins(row["Start"]):
+                        yard_prev[id(row)] = prev
+                    applied.append(row)
+                    continue
                 row = validate(r["Driver"], r["Date"], r["Start"], r["End"], r["Note"],
                                r.get("Kind"), known)
                 dup = any(n["Date"] == row["Date"] and n["Driver"] == row["Driver"]
@@ -245,6 +290,8 @@ def main():
               + (f"; {len(failed)} could not be applied and remain queued:" if failed else "."))
         for r in applied:
             print("  + " + describe(r))
+            if id(r) in yard_prev:
+                print(f"      replaced the earlier BackToYard of {yard_prev[id(r)]}")
             warn = shift_warning(r, data.get("payroll", []))
             if warn:
                 print("      WARNING: " + warn)
@@ -279,9 +326,21 @@ def main():
 
     # immediate write (no queue)
     try:
-        row = validate(args.driver, args.date, args.start, args.end, args.note, args.kind, known)
+        if args.yard:
+            row = validate_yard(args.driver, args.date, args.start, known)
+            prev = apply_yard(row, data.get("payroll", []))
+        else:
+            row = validate(args.driver, args.date, args.start, args.end, args.note, args.kind, known)
     except ValueError as e:
         sys.exit(f"ERROR: {e}")
+    if args.yard:
+        write_unified(path, data, build_date)
+        print("Set " + describe(row) + (f" (was {prev})" if prev and to_mins(prev) != to_mins(row["Start"]) else ""))
+        warn = shift_warning(row, data.get("payroll", []))
+        if warn:
+            print("  WARNING: " + warn)
+        print(f"{os.path.basename(path)} updated.")
+        return
     notes.append(row)
     data["notes"] = notes
     write_unified(path, data, build_date)

@@ -184,6 +184,7 @@ class UnifiedData:
     benchmarks: dict          # svcType -> minutes (float)
     shift_split_time: str     # "HH:MM"
     threshold: int
+    dvir_mins: int            # post-trip allowance after yard arrival; also the pre/post DVIR block
     driver_order: list
     deliveries_no_fleet: pd.DataFrame = field(default=None)
     rolled_history: pd.DataFrame = field(default=None)
@@ -514,6 +515,10 @@ def load_unified(file_bytes: bytes) -> UnifiedData:
         threshold = int(meta.get("threshold", "20"))
     except ValueError:
         threshold = 20
+    try:
+        dvir_mins = max(0, int(float(meta.get("dvir_mins", "20") or 20)))
+    except ValueError:
+        dvir_mins = 20
 
     order = [d.strip() for d in (meta.get("driver_order") or "").split(",") if d.strip()]
     driver_order = order or list(DRIVER_SENIORITY)
@@ -521,7 +526,7 @@ def load_unified(file_bytes: bytes) -> UnifiedData:
     data = UnifiedData(deliveries=deliveries, payroll=payroll, punches=punches,
                        customers=customers, notes=notes, meta=meta, product_map=product_map,
                        benchmarks=benchmarks, shift_split_time=shift_split,
-                       threshold=threshold, driver_order=driver_order)
+                       threshold=threshold, dvir_mins=dvir_mins, driver_order=driver_order)
     data.deliveries_no_fleet = deliveries[~deliveries["is_fleet"] & ~deliveries["is_terminal"]].reset_index(drop=True)
 
     # rolled history + averages are computed once here (calc imports parsing, not vice versa)
