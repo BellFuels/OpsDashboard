@@ -155,6 +155,12 @@ def apply_yard(row, payroll):
     return prev
 
 
+def is_duplicate(row, notes):
+    """True when a note for the same driver, date and start time is already on file."""
+    return any(n["Date"] == row["Date"] and n["Driver"] == row["Driver"]
+               and to_mins(n["Start"]) == to_mins(row["Start"]) for n in notes)
+
+
 def describe(row):
     if row.get("Kind") == "Yard":
         return f"[Yard] {row['Driver']} {row['Date']} back at yard {row['Start']}"
@@ -175,6 +181,7 @@ def write_queue(path, rows):
         if os.path.exists(path):
             os.remove(path)
         return
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
         for r in rows:
             f.write(json.dumps(r, ensure_ascii=False) + "\n")
@@ -268,9 +275,7 @@ def main():
                     continue
                 row = validate(r["Driver"], r["Date"], r["Start"], r["End"], r["Note"],
                                r.get("Kind"), known)
-                dup = any(n["Date"] == row["Date"] and n["Driver"] == row["Driver"]
-                          and to_mins(n["Start"]) == to_mins(row["Start"]) for n in notes)
-                if dup:
+                if is_duplicate(row, notes):
                     raise ValueError("a note for that driver, date and start time is already on file")
                 notes.append(row)
                 applied.append(row)
@@ -331,6 +336,8 @@ def main():
             prev = apply_yard(row, data.get("payroll", []))
         else:
             row = validate(args.driver, args.date, args.start, args.end, args.note, args.kind, known)
+            if is_duplicate(row, notes):
+                raise ValueError("a note for that driver, date and start time is already on file")
     except ValueError as e:
         sys.exit(f"ERROR: {e}")
     if args.yard:

@@ -4,9 +4,45 @@ hours-of-service warnings."""
 from datetime import timedelta
 
 import pandas as pd
+import plotly.graph_objects as go
 import streamlit as st
 
 from lib import calc, theme
+
+
+def shift_hours_chart(data):
+    """Two lines, one per shift, of total payroll hours per day over the last
+    three months. A driver is Shift 1 when they clock in before the file's
+    shift split time and Shift 2 at or after it, the same rule Quick View uses
+    for gallons."""
+    split = data.shift_split_time
+    series = calc.shift_hours_by_day(data.payroll, split, days=91)
+    st.markdown("##### Payroll hours by shift · last 3 months")
+    if series.empty:
+        st.info("No payroll hours in the last 3 months of this file.")
+        return
+    fig = go.Figure()
+    for col, name, color in (("shift1", f"Shift 1 · in before {split}", theme.ACCENT),
+                             ("shift2", f"Shift 2 · in from {split}", theme.GREEN)):
+        fig.add_trace(go.Scatter(
+            x=series["date"], y=series[col], mode="lines+markers", name=name,
+            line=dict(color=color, width=2), marker=dict(size=5),
+            hovertemplate="%{y:.1f} h<extra>" + name + "</extra>"))
+    fig.update_layout(theme.chart_layout(
+        height=340, margin=dict(l=10, r=10, t=10, b=10),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0),
+        xaxis=dict(type="date", tickformat="%b %d", gridcolor=theme.BORDER_SOFT),
+        yaxis=dict(title="hours", rangemode="tozero", gridcolor=theme.BORDER_SOFT),
+        hovermode="x unified",
+        hoverlabel=dict(bgcolor=theme.CARD_BG_2, bordercolor=theme.BORDER, font=dict(color=theme.INK))))
+    st.plotly_chart(fig, width="stretch", config={"displayModeBar": False})
+    first, last = series["date"].iloc[0], series["date"].iloc[-1]
+    note = (f"{first[5:7].lstrip('0')}/{first[8:].lstrip('0')} – {last[5:7].lstrip('0')}/{last[8:].lstrip('0')}: "
+            f"Shift 1 {series['shift1'].sum():,.1f} h · Shift 2 {series['shift2'].sum():,.1f} h "
+            f"across {len(series)} payroll days.")
+    if series["no_punch"].sum():
+        note += f" {int(series['no_punch'].sum())} driver-day(s) had hours but no clock-in and count into Shift 1."
+    st.caption(note)
 
 
 def render(data, _sel_date):
@@ -71,3 +107,6 @@ def render(data, _sel_date):
     st.dataframe(grid.style.apply(style_grid, axis=1), hide_index=True, width="stretch",
                  height=38 * (len(grid) + 1) + 5)
     st.caption("Cell: 8.5–9.5h yellow · ≥9.5h red — Weekly: ≥40h by Thu yellow · ≥50h by Fri orange · ≥60h red (DOT HOS limit)")
+
+    with st.container(border=True):
+        shift_hours_chart(data)

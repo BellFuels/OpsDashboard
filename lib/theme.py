@@ -35,7 +35,7 @@ TIMELINE = {
     "shift_border": "#000000",           # black outline around the shift bar
     "delivery": "#1c7d47",               # dark green for delivery (stop) segments
     "fleet": "#a569c9",
-    "terminal": "#e6c33a",
+    "terminal": "#F0731E",               # orange: terminal load (kept well apart from the yellow yard block)
     "yard": "#FFD60A",                   # yellow: Guaranteed Time (yard arrival + allowance -> clock-out)
     "downtime": "#000000",               # black, white duration text inside
     "note": "#3fa0ff",                   # blue: a free-text timeline note

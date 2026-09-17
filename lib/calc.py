@@ -398,3 +398,34 @@ def payroll_week_grid(payroll, week_start, driver_order):
                      "days_worked": days_worked, "warn": warn})
     day_totals = [sum(r["day_hours"][i] or 0 for r in rows) for i in range(7)]
     return rows, week_dates, label, day_totals
+
+
+def shift_hours_by_day(payroll, split_hhmm, days=91):
+    """Total payroll hours per day split by shift, for the `days` days ending at
+    the latest payroll date. A driver is Shift 1 when they clock in before the
+    split time and Shift 2 at or after it (the Quick View rule); a row with hours
+    but no clock-in counts into Shift 1 and is tallied in no_punch. Returns a
+    DataFrame (date, shift1, shift2, no_punch), one row per date with payroll."""
+    from lib.timeline import to_abs_mins
+    cols = ["date", "shift1", "shift2", "no_punch"]
+    if payroll.empty:
+        return pd.DataFrame(columns=cols)
+    h, m = (int(x) for x in split_hhmm.split(":"))
+    cutoff = h * 60 + m
+    end = datetime.strptime(payroll["date"].max(), "%Y-%m-%d")
+    start = (end - timedelta(days=days - 1)).strftime("%Y-%m-%d")
+    by_date = {}
+    for _, p in payroll[payroll["date"] >= start].iterrows():
+        hrs = p["hours"]
+        if hrs is None or pd.isna(hrs) or hrs <= 0:
+            continue
+        row = by_date.setdefault(p["date"], {"date": p["date"], "shift1": 0.0, "shift2": 0.0, "no_punch": 0})
+        in_m = to_abs_mins(p["clock_in"], None)
+        if in_m is None:
+            row["shift1"] += hrs
+            row["no_punch"] += 1
+        elif in_m < cutoff:
+            row["shift1"] += hrs
+        else:
+            row["shift2"] += hrs
+    return pd.DataFrame(sorted(by_date.values(), key=lambda r: r["date"]), columns=cols)

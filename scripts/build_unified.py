@@ -457,7 +457,8 @@ def classify_file(path):
 
 def process_daily(eff_rows, trans_rows):
     """Port of v1 processDaily: join Efficiency<->Transact, flag fleet/terminal.
-    Returns (records, skipped_nan) where each record is a dict in Deliveries-sheet shape."""
+    Returns (records, skipped_nan, transact_only) where each record is a dict in
+    Deliveries-sheet shape."""
     t_sample = trans_rows[0] if trans_rows else {}
     t_order = find_col(t_sample, ["Order No.", "Order No", "OrderNo", "Order Number", "SO Number"])
     t_vol = find_col(t_sample, ["Gross Vol", "GrossVol", "Gross Volume"])
@@ -583,6 +584,11 @@ def process_daily(eff_rows, trans_rows):
     # bulk/gravity drops, e.g. mobile-fueling customers) would otherwise vanish
     # from the unified file. Append them from Transact alone; D…/H…-prefixed
     # order numbers are internal terminal-loading/fleet-fuel rows and stay out.
+    # Only for dates the Efficiency Report itself covers: a Transact export that
+    # reaches back further than the Efficiency Report would otherwise put a
+    # handful of rows on an earlier date, and replace-by-date would then wipe
+    # that date's full history in favour of them.
+    eff_dates = {r["Date"] for r in records if r["Date"]}
     transact_only = 0
     for order_no, entries in trans_lookup.items():
         if order_no in matched_orders or not re.fullmatch(r"\d+", order_no):
@@ -594,7 +600,7 @@ def process_daily(eff_rows, trans_rows):
             if t["status"] and not t["status"].lower().startswith("comp"):
                 continue
             date = t["assignDate"] or t["delivDate"]
-            if not date:
+            if not date or date not in eff_dates:
                 continue
             # overlapping Transact exports repeat an order's rows — append once
             key = (t["grossVol"], t["delivDate"], cell_str(t["delStart"]))
@@ -1235,6 +1241,9 @@ def main():
     print("Files detected:")
     print("\n".join(summary) if summary else "  (inbox empty)")
 
+    if classified["transact"] and not classified["efficiency"]:
+        print("\nERROR: found a Transact View but no Efficiency Report — need both to join addresses/products.")
+        sys.exit(1)
     if not args.seed and not classified["efficiency"] and not classified["payroll_pdf"] \
             and not classified["payroll_sheet"] and not classified["customers"]:
         print("\nERROR: nothing to process — no efficiency report, payroll, or customer list in inbox.")
@@ -1425,6 +1434,10 @@ def main():
     print(f"\nWindow: {dates[0]} to {dates[-1]} — {len(dates)} day(s) with data, "
           f"{len(gaps)} calendar day(s) without (weekends/holidays expected).")
 
+    if not gallons_check_ok:
+        print("\nERROR: gallons cross-check mismatch — nothing written, inbox left in place. Inspect before rebuilding!")
+        sys.exit(1)
+
     out_path = os.path.join(args.out, f"Bell_Unified_{dates[-1]}.xlsx")
     if args.dry_run:
         print(f"\nDRY RUN — would write {out_path} "
@@ -1442,17 +1455,14 @@ def main():
     if not args.no_archive:
         archive_dir = os.path.join(args.processed, build_date)
         os.makedirs(archive_dir, exist_ok=True)
-        for f in inbox_files:
-            if f in classified["unified"]:
-                continue  # never archive a unified file someone dropped in
+        # never archive a unified file someone dropped in, and leave
+        # unrecognized files where Chris can see and identify them
+        skip = set(classified["unified"]) | set(classified["unknown"])
+        moved = [f for f in inbox_files if f not in skip]
+        for f in moved:
             shutil.move(f, os.path.join(archive_dir, os.path.basename(f)))
-        moved = [f for f in inbox_files if f not in classified["unified"]]
         if moved:
             print(f"Archived {len(moved)} inbox file(s) to {archive_dir}")
-
-    if not gallons_check_ok:
-        print("\nERROR: gallons cross-check mismatch — inspect before emailing!")
-        sys.exit(1)
 
 
 if __name__ == "__main__":
