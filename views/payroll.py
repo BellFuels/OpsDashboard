@@ -16,20 +16,26 @@ def shift_hours_chart(data):
     driver is Shift 1 when they clock in before the file's shift split time and
     Shift 2 at or after it, the same rule Quick View uses for gallons."""
     split = data.shift_split_time
-    series = calc.shift_hours_by_week(data.payroll, split, weeks=13)
+    series = calc.shift_hours_by_week(data.payroll, split, data.deliveries_no_fleet, weeks=13)
     st.markdown("##### Weekly payroll hours by shift · last 3 months")
+    st.caption("Hover a week for that shift's hours and the gallons it delivered.")
     if series.empty:
         st.info("No payroll hours in the last 3 months of this file.")
         return
     fig = go.Figure()
     for col, name, color in (("shift1", f"Shift 1 · in before {split}", theme.ACCENT),
                              ("shift2", f"Shift 2 · in from {split}", theme.GREEN)):
+        gal = series[col + "_gal"]
+        # hover: week label, gallons, and gallons per payroll hour for that shift
+        custom = [[lbl, f"{g:,.0f}", f"{g / hrs:,.0f}" if hrs else "—"]
+                  for lbl, g, hrs in zip(series["label"], gal, series[col])]
         fig.add_trace(go.Scatter(
             x=series["week_start"], y=series[col], mode="lines+markers+text", name=name,
             text=[f"{v:,.0f}" for v in series[col]], textposition="top center",
             textfont=dict(size=10, color=color),
-            customdata=series["label"], line=dict(color=color, width=2), marker=dict(size=7),
-            hovertemplate="Week of %{customdata}<br>%{y:.1f} h<extra>" + name + "</extra>"))
+            customdata=custom, line=dict(color=color, width=2), marker=dict(size=7),
+            hovertemplate=("Week of %{customdata[0]}<br>%{y:.1f} h · %{customdata[1]} gal "
+                           "· %{customdata[2]} gal/h<extra>" + name + "</extra>")))
     fig.update_layout(theme.chart_layout(
         height=340, margin=dict(l=10, r=10, t=30, b=10),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0),
@@ -41,7 +47,8 @@ def shift_hours_chart(data):
     st.plotly_chart(fig, width="stretch", config={"displayModeBar": False})
     last = series.iloc[-1]
     note = (f"Weeks of {series['label'].iloc[0]} through {last['label']}: "
-            f"Shift 1 {series['shift1'].sum():,.1f} h · Shift 2 {series['shift2'].sum():,.1f} h.")
+            f"Shift 1 {series['shift1'].sum():,.1f} h / {series['shift1_gal'].sum():,.0f} gal · "
+            f"Shift 2 {series['shift2'].sum():,.1f} h / {series['shift2_gal'].sum():,.0f} gal.")
     earliest_pay, latest_pay = data.payroll["date"].min(), data.payroll["date"].max()
     if earliest_pay > series["week_start"].iloc[0]:
         note += f" The first week is partial: payroll starts {earliest_pay[5:7].lstrip('0')}/{earliest_pay[8:].lstrip('0')}."

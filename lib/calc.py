@@ -400,36 +400,50 @@ def payroll_week_grid(payroll, week_start, driver_order):
     return rows, week_dates, label, day_totals
 
 
-def shift_hours_by_week(payroll, split_hhmm, weeks=13):
+def shift_hours_by_week(payroll, split_hhmm, deliveries=None, weeks=13):
     """Total payroll hours per payroll week (Sun–Sat, the grid's week) split by
     shift, for the `weeks` weeks ending with the week of the latest payroll
     date. A driver is Shift 1 when they clock in before the split time and
     Shift 2 at or after it (the Quick View rule); a row with hours but no
-    clock-in counts into Shift 1 and is tallied in no_punch. Returns a DataFrame
-    (week_start, week_end, label, shift1, shift2, no_punch, days), one row per
-    week that has payroll; `days` is how many payroll days the week holds, so a
-    partial current week can be called out."""
+    clock-in counts into Shift 1 and is tallied in no_punch. When `deliveries`
+    (deliveries_no_fleet) is given, each week also carries the gallons delivered
+    per shift, split day by day with shift_split_gallons so it matches Quick
+    View. Returns a DataFrame (week_start, week_end, label, shift1, shift2,
+    shift1_gal, shift2_gal, no_punch, days), one row per week that has payroll;
+    `days` is how many payroll days the week holds, so a partial current week
+    can be called out."""
     from lib.timeline import to_abs_mins
-    cols = ["week_start", "week_end", "label", "shift1", "shift2", "no_punch", "days"]
+    cols = ["week_start", "week_end", "label", "shift1", "shift2",
+            "shift1_gal", "shift2_gal", "no_punch", "days"]
     if payroll.empty:
         return pd.DataFrame(columns=cols)
     h, m = (int(x) for x in split_hhmm.split(":"))
     cutoff = h * 60 + m
     anchor = payroll_week_anchor(payroll)                 # Sunday of the latest week
     start = (anchor - timedelta(weeks=weeks - 1)).isoformat()
+
+    def week_of(iso):
+        d = datetime.strptime(iso, "%Y-%m-%d").date()
+        return d - timedelta(days=(d.weekday() + 1) % 7)
+
     by_week = {}
     days_seen = {}
-    for _, p in payroll[payroll["date"] >= start].iterrows():
+
+    def week_row(ws):
+        we = ws + timedelta(days=6)
+        return by_week.setdefault(ws, {
+            "week_start": ws.isoformat(), "week_end": we.isoformat(),
+            "label": f"{ws.month}/{ws.day} – {we.month}/{we.day}",
+            "shift1": 0.0, "shift2": 0.0, "shift1_gal": 0.0, "shift2_gal": 0.0,
+            "no_punch": 0, "days": 0})
+
+    pay_window = payroll[payroll["date"] >= start]
+    for _, p in pay_window.iterrows():
         hrs = p["hours"]
         if hrs is None or pd.isna(hrs) or hrs <= 0:
             continue
-        d = datetime.strptime(p["date"], "%Y-%m-%d").date()
-        ws = d - timedelta(days=(d.weekday() + 1) % 7)
-        we = ws + timedelta(days=6)
-        row = by_week.setdefault(ws, {
-            "week_start": ws.isoformat(), "week_end": we.isoformat(),
-            "label": f"{ws.month}/{ws.day} – {we.month}/{we.day}",
-            "shift1": 0.0, "shift2": 0.0, "no_punch": 0, "days": 0})
+        ws = week_of(p["date"])
+        row = week_row(ws)
         days_seen.setdefault(ws, set()).add(p["date"])
         in_m = to_abs_mins(p["clock_in"], None)
         if in_m is None:
@@ -441,4 +455,18 @@ def shift_hours_by_week(payroll, split_hhmm, weeks=13):
             row["shift2"] += hrs
     for ws, row in by_week.items():
         row["days"] = len(days_seen[ws])
+
+    # gallons per shift: the same per-day, driver-based split Quick View shows,
+    # summed into the payroll week. Only weeks that have payroll are kept, so
+    # the chart's x-axis is unchanged.
+    if deliveries is not None and len(deliveries):
+        dwin = deliveries[deliveries["date"] >= start]
+        for day, raw_day in dwin.groupby("date"):
+            ws = week_of(day)
+            if ws not in by_week:
+                continue
+            pay_day = pay_window[(pay_window["date"] == day) & (pay_window["clock_in"] != "")]
+            g1, g2, _, _ = shift_split_gallons(raw_day, split_hhmm, pay_day)
+            by_week[ws]["shift1_gal"] += g1
+            by_week[ws]["shift2_gal"] += g2
     return pd.DataFrame([by_week[k] for k in sorted(by_week)], columns=cols)
