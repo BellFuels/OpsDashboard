@@ -11,13 +11,13 @@ from lib import calc, theme
 
 
 def shift_hours_chart(data):
-    """Two lines, one per shift, of total payroll hours per day over the last
-    three months. A driver is Shift 1 when they clock in before the file's
-    shift split time and Shift 2 at or after it, the same rule Quick View uses
-    for gallons."""
+    """Two lines, one per shift, of total payroll hours per payroll week
+    (Sun–Sat, the same week as the grid above) over the last three months. A
+    driver is Shift 1 when they clock in before the file's shift split time and
+    Shift 2 at or after it, the same rule Quick View uses for gallons."""
     split = data.shift_split_time
-    series = calc.shift_hours_by_day(data.payroll, split, days=91)
-    st.markdown("##### Payroll hours by shift · last 3 months")
+    series = calc.shift_hours_by_week(data.payroll, split, weeks=13)
+    st.markdown("##### Weekly payroll hours by shift · last 3 months")
     if series.empty:
         st.info("No payroll hours in the last 3 months of this file.")
         return
@@ -25,21 +25,28 @@ def shift_hours_chart(data):
     for col, name, color in (("shift1", f"Shift 1 · in before {split}", theme.ACCENT),
                              ("shift2", f"Shift 2 · in from {split}", theme.GREEN)):
         fig.add_trace(go.Scatter(
-            x=series["date"], y=series[col], mode="lines+markers", name=name,
-            line=dict(color=color, width=2), marker=dict(size=5),
-            hovertemplate="%{y:.1f} h<extra>" + name + "</extra>"))
+            x=series["week_start"], y=series[col], mode="lines+markers+text", name=name,
+            text=[f"{v:,.0f}" for v in series[col]], textposition="top center",
+            textfont=dict(size=10, color=color),
+            customdata=series["label"], line=dict(color=color, width=2), marker=dict(size=7),
+            hovertemplate="Week of %{customdata}<br>%{y:.1f} h<extra>" + name + "</extra>"))
     fig.update_layout(theme.chart_layout(
-        height=340, margin=dict(l=10, r=10, t=10, b=10),
+        height=340, margin=dict(l=10, r=10, t=30, b=10),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0),
-        xaxis=dict(type="date", tickformat="%b %d", gridcolor=theme.BORDER_SOFT),
+        xaxis=dict(type="date", tickformat="%b %d", tickvals=list(series["week_start"]),
+                   title="week of (Sunday)", gridcolor=theme.BORDER_SOFT),
         yaxis=dict(title="hours", rangemode="tozero", gridcolor=theme.BORDER_SOFT),
         hovermode="x unified",
         hoverlabel=dict(bgcolor=theme.CARD_BG_2, bordercolor=theme.BORDER, font=dict(color=theme.INK))))
     st.plotly_chart(fig, width="stretch", config={"displayModeBar": False})
-    first, last = series["date"].iloc[0], series["date"].iloc[-1]
-    note = (f"{first[5:7].lstrip('0')}/{first[8:].lstrip('0')} – {last[5:7].lstrip('0')}/{last[8:].lstrip('0')}: "
-            f"Shift 1 {series['shift1'].sum():,.1f} h · Shift 2 {series['shift2'].sum():,.1f} h "
-            f"across {len(series)} payroll days.")
+    last = series.iloc[-1]
+    note = (f"Weeks of {series['label'].iloc[0]} through {last['label']}: "
+            f"Shift 1 {series['shift1'].sum():,.1f} h · Shift 2 {series['shift2'].sum():,.1f} h.")
+    earliest_pay, latest_pay = data.payroll["date"].min(), data.payroll["date"].max()
+    if earliest_pay > series["week_start"].iloc[0]:
+        note += f" The first week is partial: payroll starts {earliest_pay[5:7].lstrip('0')}/{earliest_pay[8:].lstrip('0')}."
+    if latest_pay < last["week_end"]:
+        note += f" The last week is partial: payroll through {latest_pay[5:7].lstrip('0')}/{latest_pay[8:].lstrip('0')} ({int(last['days'])} day(s))."
     if series["no_punch"].sum():
         note += f" {int(series['no_punch'].sum())} driver-day(s) had hours but no clock-in and count into Shift 1."
     st.caption(note)

@@ -400,26 +400,37 @@ def payroll_week_grid(payroll, week_start, driver_order):
     return rows, week_dates, label, day_totals
 
 
-def shift_hours_by_day(payroll, split_hhmm, days=91):
-    """Total payroll hours per day split by shift, for the `days` days ending at
-    the latest payroll date. A driver is Shift 1 when they clock in before the
-    split time and Shift 2 at or after it (the Quick View rule); a row with hours
-    but no clock-in counts into Shift 1 and is tallied in no_punch. Returns a
-    DataFrame (date, shift1, shift2, no_punch), one row per date with payroll."""
+def shift_hours_by_week(payroll, split_hhmm, weeks=13):
+    """Total payroll hours per payroll week (Sun–Sat, the grid's week) split by
+    shift, for the `weeks` weeks ending with the week of the latest payroll
+    date. A driver is Shift 1 when they clock in before the split time and
+    Shift 2 at or after it (the Quick View rule); a row with hours but no
+    clock-in counts into Shift 1 and is tallied in no_punch. Returns a DataFrame
+    (week_start, week_end, label, shift1, shift2, no_punch, days), one row per
+    week that has payroll; `days` is how many payroll days the week holds, so a
+    partial current week can be called out."""
     from lib.timeline import to_abs_mins
-    cols = ["date", "shift1", "shift2", "no_punch"]
+    cols = ["week_start", "week_end", "label", "shift1", "shift2", "no_punch", "days"]
     if payroll.empty:
         return pd.DataFrame(columns=cols)
     h, m = (int(x) for x in split_hhmm.split(":"))
     cutoff = h * 60 + m
-    end = datetime.strptime(payroll["date"].max(), "%Y-%m-%d")
-    start = (end - timedelta(days=days - 1)).strftime("%Y-%m-%d")
-    by_date = {}
+    anchor = payroll_week_anchor(payroll)                 # Sunday of the latest week
+    start = (anchor - timedelta(weeks=weeks - 1)).isoformat()
+    by_week = {}
+    days_seen = {}
     for _, p in payroll[payroll["date"] >= start].iterrows():
         hrs = p["hours"]
         if hrs is None or pd.isna(hrs) or hrs <= 0:
             continue
-        row = by_date.setdefault(p["date"], {"date": p["date"], "shift1": 0.0, "shift2": 0.0, "no_punch": 0})
+        d = datetime.strptime(p["date"], "%Y-%m-%d").date()
+        ws = d - timedelta(days=(d.weekday() + 1) % 7)
+        we = ws + timedelta(days=6)
+        row = by_week.setdefault(ws, {
+            "week_start": ws.isoformat(), "week_end": we.isoformat(),
+            "label": f"{ws.month}/{ws.day} – {we.month}/{we.day}",
+            "shift1": 0.0, "shift2": 0.0, "no_punch": 0, "days": 0})
+        days_seen.setdefault(ws, set()).add(p["date"])
         in_m = to_abs_mins(p["clock_in"], None)
         if in_m is None:
             row["shift1"] += hrs
@@ -428,4 +439,6 @@ def shift_hours_by_day(payroll, split_hhmm, days=91):
             row["shift1"] += hrs
         else:
             row["shift2"] += hrs
-    return pd.DataFrame(sorted(by_date.values(), key=lambda r: r["date"]), columns=cols)
+    for ws, row in by_week.items():
+        row["days"] = len(days_seen[ws])
+    return pd.DataFrame([by_week[k] for k in sorted(by_week)], columns=cols)
