@@ -322,8 +322,9 @@ def build_timeline(data, iso_date):
                 durs.append(dur)
         if not ys:
             continue
-        # thin black border on each stop segment so back-to-back stops don't merge
-        border = 1 if kind in ("delivery", "fleet", "terminal") else 0
+        # thin black border on every block so touching blocks stay distinct; the
+        # red "over" tail sits inside its stop's outline and draws none of its own
+        border = 0 if kind == "over" else 1
         extra = {}
         if kind in ("downtime", "note"):
             # Notes and downtime can overlap a stop (a regen during a 3-hour yard
