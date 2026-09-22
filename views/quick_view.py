@@ -31,7 +31,7 @@ def tank_svg(fill):
               style="transform: scale(1, {fill:.4f})"/>
         <rect x="22" y="18" width="10" height="174" rx="5" fill="rgba(255,255,255,0.08)"/>
       </g>
-      <rect x="14" y="14" width="90" height="182" rx="22" fill="none" stroke="#3A5261" stroke-width="2.5"/>
+      <rect x="14" y="14" width="90" height="182" rx="22" fill="none" stroke="{theme.SLATE}" stroke-width="2.5"/>
       <text x="59" y="114" text-anchor="middle" fill="{ink}" font-family="Saira Semi Condensed, system-ui, sans-serif"
             font-weight="700" font-size="26">{round(fill * 100)}%</text>
     </svg>"""

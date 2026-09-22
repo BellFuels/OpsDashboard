@@ -16,6 +16,7 @@ BORDER_SOFT = "#20313D"      # row separators
 INK = "#EAF1F5"
 MUTED = "#8AA1AF"
 MUTED_2 = "#5E7382"          # axis / faint labels
+SLATE = "#3A5261"            # inactive: downtime block, gauge outline
 
 # ── accent and semantic colors ──
 ACCENT = "#F2A73C"           # amber — brand, diesel, selected view
@@ -37,7 +38,7 @@ TIMELINE = {
     "fleet": "#a569c9",
     "terminal": "#F0731E",               # orange: terminal load (kept well apart from the yellow yard block)
     "yard": "#FFD60A",                   # yellow: Guaranteed Time (yard arrival + allowance -> clock-out)
-    "downtime": "#000000",               # black, white duration text inside
+    "downtime": SLATE,                   # slate: the truck is off; white duration text inside
     "note": "#3fa0ff",                   # blue: a free-text timeline note
     "over": "#e5484d",                   # red: stop time beyond the site's historical average
 }
