@@ -272,105 +272,78 @@ def build_timeline(data, iso_date):
         showlegend=False,
     ))
     ms = lambda m: timedelta(minutes=m).total_seconds() * 1000
-    STOP_KINDS = ("delivery", "fleet", "terminal")
-
-    def nested_ids(d):
-        """Segments drawn entirely inside a longer stop — concurrent deliveries at
-        one site (e.g. Green Soils sits inside the Plote yard stop). A 19-min stop
-        inside a 151-min one is ~7px wide and is completely covered by its parent,
-        so it gets its own thinner bar drawn last (on top) to stay visible and
-        hoverable."""
-        out = set()
-        segs = [s for s in d["segments"] if s[2] in STOP_KINDS]
-        for i, a in enumerate(segs):
-            for b in segs:
-                if b is a or b[2] not in STOP_KINDS:
-                    continue
-                if b[0] <= a[0] and a[0] + a[1] <= b[0] + b[1] and b[1] > a[1]:
-                    out.add(id(a))
-                    break
+    # Overlapping blocks: smallest on top, always. Two tickets can run inside a
+    # long stop (concurrent deliveries at one site), a note can sit inside a stop,
+    # and a long downtime can swallow a stop and a terminal load (Dan, 9/18). One
+    # rule covers all of them: whenever two blocks overlap, the shorter one is
+    # painted over the longer one and wins the hover. A long block is never hidden
+    # by a short one, and a short one is never hidden by a long one.
+    #
+    # Each segment gets a depth: 0 for a block nothing longer overlaps, else one
+    # more than the deepest longer block it overlaps. Plotly paints by zorder and
+    # hands a hover tie to the lower trace index, so traces go out deepest first
+    # (they win the hover) with zorder = depth (they paint on top).
+    def depths(segs):
+        order = sorted(range(len(segs)), key=lambda i: -segs[i][1])   # longest first
+        out = [0] * len(segs)
+        for i in order:
+            s0, e0 = segs[i][0], segs[i][0] + segs[i][1]
+            out[i] = max((out[j] + 1 for j in order
+                          if segs[j][1] > segs[i][1]
+                          and segs[j][0] < e0 and s0 < segs[j][0] + segs[j][1]),
+                         default=0)
         return out
 
-    nested = {d["name"]: nested_ids(d) for d in drivers}
+    seg_depth = {d["name"]: depths(d["segments"]) for d in drivers}
+    max_depth = max((v for ds in seg_depth.values() for v in ds), default=0)
+    KINDS = [("yard", "Guaranteed Time"), ("downtime", "Downtime"), ("note", "Note"),
+             ("delivery", "Stop time"), ("fleet", "Fleet Fuel"),
+             ("terminal", "Terminal Load"), ("over", "Over site avg")]
+    in_legend = set()
 
-    for kind, label in [("yard", "Guaranteed Time"), ("downtime", "Downtime"),
-                        ("note", "Note"),
-                        ("delivery", "Stop time"), ("fleet", "Fleet Fuel"),
-                        ("terminal", "Terminal Load"), ("over", "Over site avg")]:
-        ys, xs, bases, texts, durs = [], [], [], [], []
-        for d in drivers:
-            for seg in d["segments"]:
-                start, dur, k, txt, over = seg
-                if k in STOP_KINDS and id(seg) in nested[d["name"]]:
-                    continue  # drawn later, on top
-                if kind == "over":
-                    # red tail: the portion of a delivery beyond the site average
-                    if k == "delivery" and over > 0:
-                        ys.append(d["name"])
-                        xs.append(ms(over))
-                        bases.append(dt(start + (dur - over)))
-                        texts.append(txt)
-                    continue
-                if k != kind:
-                    continue
-                # full stop drawn green (with a black outline so touching stops stay
-                # distinct); the red "over" trace overlays its tail on top
-                ys.append(d["name"])
-                xs.append(ms(dur))
-                bases.append(dt(start))
-                texts.append(txt)
-                durs.append(dur)
-        if not ys:
-            continue
-        # thin black border on every block so touching blocks stay distinct; the
-        # red "over" tail sits inside its stop's outline and draws none of its own
-        border = 0 if kind == "over" else 1
-        extra = {}
-        if kind in ("downtime", "note"):
-            # Notes and downtime can overlap a stop (a regen during a 3-hour yard
-            # visit). They sit early in trace order so they win the hover tie, but
-            # that also painted the stop over them; zorder lifts them on top
-            # without changing hover priority.
-            extra["zorder"] = 10
-        if kind == "note":
-            extra["showlegend"] = False  # explained in "How to read this" instead
-        if kind == "downtime":
-            # black block with the duration in white inside it
-            extra.update(text=[fmt_hmm(v) for v in durs], textposition="inside",
-                         insidetextanchor="middle", constraintext="both",
-                         textfont=dict(color="#ffffff", size=11))
-        fig.add_trace(go.Bar(y=ys, x=xs, base=bases, orientation="h", width=0.45,
-                             marker=dict(color=COLORS[kind], line=dict(color="#000000", width=border)),
-                             name=label, hovertemplate="%{customdata}<extra></extra>", customdata=texts,
-                             **extra))
-
-    # Nested stops get their own thin sub-lane just below the main stop bar
-    # (offset past the 0.45-wide bars' ±0.225 extent, still inside the shift band).
-    # Overlapping bars can't be hovered separately — Plotly's "closest" resolves a
-    # tie in favour of the lower trace index, so a nested bar drawn on top is still
-    # swallowed by its parent. Giving it clear vertical space is what makes it
-    # both visible and reliably hoverable.
-    for want_over in (False, True):
-        ys, xs, bases, texts = [], [], [], []
-        for d in drivers:
-            for seg in d["segments"]:
-                start, dur, k, txt, over = seg
-                if k not in STOP_KINDS or id(seg) not in nested[d["name"]]:
-                    continue
-                if want_over and not (k == "delivery" and over > 0):
-                    continue
-                ys.append(d["name"])
-                xs.append(ms(over if want_over else dur))
-                bases.append(dt(start + (dur - over) if want_over else start))
-                texts.append(txt)
-        if not ys:
-            continue
-        fig.add_trace(go.Bar(
-            y=ys, x=xs, base=bases, orientation="h", width=0.13, offset=0.235,
-            marker=dict(color=COLORS["over"] if want_over else COLORS["delivery"],
-                        line=dict(color="#000000", width=0 if want_over else 1)),
-            name="Over site avg" if want_over else "Stop time",
-            showlegend=False, hovertemplate="%{customdata}<extra></extra>", customdata=texts))
+    for depth in range(max_depth, -1, -1):
+        for kind, label in KINDS:
+            ys, xs, bases, texts, durs = [], [], [], [], []
+            for d in drivers:
+                for seg, sd in zip(d["segments"], seg_depth[d["name"]]):
+                    if sd != depth:
+                        continue
+                    start, dur, k, txt, over = seg
+                    if kind == "over":
+                        # red tail: the portion of a delivery beyond the site average,
+                        # drawn at its stop's depth right after the stop so it lies on it
+                        if k == "delivery" and over > 0:
+                            ys.append(d["name"])
+                            xs.append(ms(over))
+                            bases.append(dt(start + (dur - over)))
+                            texts.append(txt)
+                        continue
+                    if k != kind:
+                        continue
+                    ys.append(d["name"])
+                    xs.append(ms(dur))
+                    bases.append(dt(start))
+                    texts.append(txt)
+                    durs.append(dur)
+            if not ys:
+                continue
+            # thin black border on every block so touching and stacked blocks stay
+            # distinct; the red "over" tail sits inside its stop's outline
+            border = 0 if kind == "over" else 1
+            extra = {"zorder": depth, "legendgroup": kind,
+                     # one legend entry per kind; notes are explained in "How to read this"
+                     "showlegend": kind != "note" and kind not in in_legend}
+            in_legend.add(kind)
+            if kind == "downtime":
+                # black block with the duration in white at its left edge, where a
+                # shorter block stacked on top of it is least likely to cover it
+                extra.update(text=[fmt_hmm(v) for v in durs], textposition="inside",
+                             insidetextanchor="start", constraintext="both",
+                             textfont=dict(color="#ffffff", size=11))
+            fig.add_trace(go.Bar(y=ys, x=xs, base=bases, orientation="h", width=0.45,
+                                 marker=dict(color=COLORS[kind], line=dict(color="#000000", width=border)),
+                                 name=label, hovertemplate="%{customdata}<extra></extra>", customdata=texts,
+                                 **extra))
     # travel-time labels in the gaps between stops (annotations survive
     # st.plotly_chart theming, unlike text-mode scatter traces)
     for d in drivers:
