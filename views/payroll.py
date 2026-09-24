@@ -114,19 +114,20 @@ def render(data, _sel_date):
             elif h >= calc.OT_DAILY_YELLOW:
                 styles[i + 1] = theme.YELLOW_BG
         total, days_worked = totals_lookup.get(drv, (0, 0))
-        # index the weekly-total column explicitly: it is no longer the last one
-        wk = len(row) - 2
+        # look the columns up by name: positional indexing silently retargets the
+        # wrong cell the moment a column is added or reordered
+        wk = row.index.get_loc("Weekly Total")
         if total >= calc.ALERT_60:
             styles[wk] = theme.RED_BG + "; font-weight: 700"
         elif total >= calc.WARN_50_BY_FRI and days_worked <= 5:
             styles[wk] = theme.ORANGE_BG + "; font-weight: 700"
         elif total >= calc.WARN_40_BY_THU and days_worked <= 4:
             styles[wk] = theme.YELLOW_BG + "; font-weight: 700"
-        remaining = calc.ALERT_60 - total
+        rem_col, remaining = row.index.get_loc("Hours Remaining"), calc.ALERT_60 - total
         if remaining <= 0:
-            styles[-1] = theme.RED_BG + "; font-weight: 700"
+            styles[rem_col] = theme.RED_BG + "; font-weight: 700"
         elif remaining <= calc.ALERT_60 - calc.WARN_50_BY_FRI:
-            styles[-1] = theme.ORANGE_BG + "; font-weight: 700"
+            styles[rem_col] = theme.ORANGE_BG + "; font-weight: 700"
         return styles
 
     st.dataframe(grid.style.apply(style_grid, axis=1), hide_index=True, width="stretch",
