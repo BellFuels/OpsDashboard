@@ -87,10 +87,14 @@ def render(data, _sel_date):
     day_cols = [f"{calc.DAY_NAMES[i]} {int(week_dates[i][5:7])}/{int(week_dates[i][8:10])}" for i in range(7)]
     grid = pd.DataFrame([
         {"Driver": r["driver"], **{day_cols[i]: cell(r["day_hours"][i]) for i in range(7)},
-         "Weekly Total": (f"{r['total']:.1f}h" + (f"  {r['warn']}" if r["warn"] else "")) if r["total"] > 0 else "—"}
+         "Weekly Total": (f"{r['total']:.1f}h" + (f"  {r['warn']}" if r["warn"] else "")) if r["total"] > 0 else "—",
+         # DOT 60-hour limit less what they have worked; negative means already over
+         "Hours Remaining": f"{calc.ALERT_60 - r['total']:.1f}h"}
         for r in rows])
+    # a fleet-wide "remaining" would be the sum of separate per-driver limits, which
+    # is not a number anyone can act on, so the totals row leaves it blank
     totals_row = {"Driver": "Totals", **{day_cols[i]: (f"{day_totals[i]:.1f}h" if day_totals[i] else "—") for i in range(7)},
-                  "Weekly Total": f"{sum(day_totals):.1f}h"}
+                  "Weekly Total": f"{sum(day_totals):.1f}h", "Hours Remaining": "—"}
     grid = pd.concat([grid, pd.DataFrame([totals_row])], ignore_index=True)
 
     hours_lookup = {(r["driver"], i): r["day_hours"][i] for r in rows for i in range(7)}
@@ -110,17 +114,26 @@ def render(data, _sel_date):
             elif h >= calc.OT_DAILY_YELLOW:
                 styles[i + 1] = theme.YELLOW_BG
         total, days_worked = totals_lookup.get(drv, (0, 0))
+        # index the weekly-total column explicitly: it is no longer the last one
+        wk = len(row) - 2
         if total >= calc.ALERT_60:
-            styles[-1] = theme.RED_BG + "; font-weight: 700"
+            styles[wk] = theme.RED_BG + "; font-weight: 700"
         elif total >= calc.WARN_50_BY_FRI and days_worked <= 5:
-            styles[-1] = theme.ORANGE_BG + "; font-weight: 700"
+            styles[wk] = theme.ORANGE_BG + "; font-weight: 700"
         elif total >= calc.WARN_40_BY_THU and days_worked <= 4:
-            styles[-1] = theme.YELLOW_BG + "; font-weight: 700"
+            styles[wk] = theme.YELLOW_BG + "; font-weight: 700"
+        remaining = calc.ALERT_60 - total
+        if remaining <= 0:
+            styles[-1] = theme.RED_BG + "; font-weight: 700"
+        elif remaining <= calc.ALERT_60 - calc.WARN_50_BY_FRI:
+            styles[-1] = theme.ORANGE_BG + "; font-weight: 700"
         return styles
 
     st.dataframe(grid.style.apply(style_grid, axis=1), hide_index=True, width="stretch",
                  height=38 * (len(grid) + 1) + 5)
-    st.caption("Cell: 8.5–9.5h yellow · ≥9.5h red — Weekly: ≥40h by Thu yellow · ≥50h by Fri orange · ≥60h red (DOT HOS limit)")
+    st.caption(f"Cell: 8.5–9.5h yellow · ≥9.5h red — Weekly: ≥40h by Thu yellow · ≥50h by Fri orange · "
+               f"≥60h red (DOT HOS limit) — Hours Remaining: {calc.ALERT_60}h limit less hours worked, "
+               f"orange at ≤{calc.ALERT_60 - calc.WARN_50_BY_FRI}h left, red at 0 or less")
 
     with st.container(border=True):
         shift_hours_chart(data)
