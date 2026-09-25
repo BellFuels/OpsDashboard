@@ -129,6 +129,11 @@ h1, h2, h3, h4, h5, h6 {{ font-family: {DISPLAY}; font-weight: 600; letter-spaci
 .glance td {{ padding: 8px 10px; border-bottom: 1px solid {BORDER_SOFT}; }}
 .glance th.num, .glance td.num {{ text-align: right; font-family: {DISPLAY}; font-weight: 600; font-size: 15px; }}
 .glance td.dim {{ color: {MUTED_2}; }}
+.glance tr.group td {{ padding: 16px 10px 6px; font-size: 11.5px; color: {MUTED}; font-weight: 500;
+    letter-spacing: .02em; border-bottom: 1px solid {BORDER}; }}
+.glance tr.sub td:first-child {{ padding-left: 22px; }}
+.glance tr.total td {{ border-top: 1px solid {BORDER}; }}
+.glance tr.total td:first-child {{ font-weight: 600; }}
 
 /* ── Plotly: round the off-white timeline panel to match the cards ── */
 [data-testid="stPlotlyChart"] {{ border-radius: 12px; overflow: hidden; }}

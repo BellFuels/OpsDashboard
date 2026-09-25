@@ -144,6 +144,51 @@ def yard_downtime_totals(pay_rows, notes=None, dvir_mins=20):
     return yard_tot, down_tot
 
 
+def terminal_loading_avgs(deliveries, notes, pay_rows, split_hhmm):
+    """Average minutes per terminal-load ticket for Shift 1, Shift 2 and both,
+    plus the ticket count. Tickets are the feed's IsTerminal rows (one per
+    SO + date, longest line) and manual Terminal notes. Feed tickets with no
+    duration are left out: the feed records about a third of loads as 0 min,
+    and averaging those in would understate every load. A ticket follows its
+    driver's shift that day (punch-in vs the split, as shift_split_gallons);
+    with no punch it falls back to the ticket's own start time."""
+    from lib.timeline import to_abs_mins
+    h, m = (int(x) for x in split_hhmm.split(":"))
+    cutoff = h * 60 + m
+    driver_shift = {}
+    for _, p in pay_rows.iterrows():
+        in_m = to_abs_mins(p["clock_in"], None)
+        if in_m is not None:
+            driver_shift[(p["date"], str(p["driver"]).lower())] = 1 if in_m < cutoff else 2
+    tickets = []  # (shift, minutes)
+    term = deliveries[deliveries["is_terminal"]]
+    for (_, dt), g in term.groupby(["so", "date"], sort=False):
+        mins = g["stop_mins"].max()
+        if pd.isna(mins) or mins <= 0:
+            continue
+        first = g.iloc[0]
+        # deliveries name drivers in full; payroll by display first name
+        s = driver_shift.get((dt, str(first["driver"] or "").split(" ")[0].lower()))
+        if s is None:
+            arr = first["arrival"]
+            s = 1 if pd.isna(arr) or arr.hour * 60 + arr.minute < cutoff else 2
+        tickets.append((s, float(mins)))
+    if notes is not None and len(notes):
+        for _, n in notes[notes["kind"] == "Terminal"].iterrows():
+            ns_m = to_abs_mins(n["start"], None)
+            ne_m = to_abs_mins(n["end"], ns_m)
+            if ns_m is None or ne_m is None or ne_m <= ns_m:
+                continue
+            s = driver_shift.get((n["date"], str(n["driver"]).lower()))
+            if s is None:
+                s = 1 if ns_m < cutoff else 2
+            tickets.append((s, float(ne_m - ns_m)))
+    avg = lambda xs: sum(xs) / len(xs) if xs else None
+    s1 = [x for s, x in tickets if s == 1]
+    s2 = [x for s, x in tickets if s == 2]
+    return avg(s1), avg(s2), avg(s1 + s2), len(tickets)
+
+
 def weekday_averages(rolled_history, end_date, weeks=6):
     """Average gallons per weekday over the `weeks` weeks ending at end_date
     (inclusive). Zero-delivery days count as zeros; days before the file's

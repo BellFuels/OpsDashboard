@@ -75,28 +75,43 @@ def gallons_band(day_gal, goal, label, split, s1, s2, week, month, projected):
 
 GLANCE_ROWS = ["Guaranteed Time", "Downtime", "Fleet avg Min/Unit", "Fleet avg Gal/Unit",
                "Gravity avg Gal/Min", "Generator avg Gal/Min", "Tank avg Gal/Min"]
+# grouped under a "Loading time" sub-header at the foot of the table
+LOADING_ROWS = ["Shift 1", "Shift 2", "Total"]
+LOADING_HELP = ("Average time per terminal-load ticket (H:MM). Includes manual Terminal notes; "
+                "feed tickets recorded as 0 min are left out. A ticket follows its driver's "
+                "shift that day.")
 
 
-def glance_values(data, rolled, pay_rows, note_rows):
-    """One column of the at-a-glance table: the seven figures for a period."""
+def glance_values(data, rolled, pay_rows, note_rows, deliveries):
+    """One column of the at-a-glance table: the seven figures for a period,
+    then the three loading-time averages."""
     m = calc.quick_view_service_metrics(rolled)
     yard_tot, down_tot = calc.yard_downtime_totals(pay_rows, note_rows, data.dvir_mins)
+    load_s1, load_s2, load_all, _ = calc.terminal_loading_avgs(deliveries, note_rows, pay_rows,
+                                                               data.shift_split_time)
     gpm = lambda v: f"{v:.3f}" if v else None
     return [fmt_hmm(yard_tot) if yard_tot else None,
             fmt_hmm(down_tot) if down_tot else None,
             fmt_hhmmss(m["fleet_min_unit"]) if m["fleet_min_unit"] else None,
             f"{m['fleet_gal_unit']:.2f}" if m["fleet_gal_unit"] else None,
-            gpm(m["grav_gpm"]), gpm(m["gen_gpm"]), gpm(m["tank_gpm"])]
+            gpm(m["grav_gpm"]), gpm(m["gen_gpm"]), gpm(m["tank_gpm"]),
+            *(fmt_hmm(v) if v else None for v in (load_s1, load_s2, load_all))]
 
 
 def glance_table(columns):
     """columns: [(header, values)] -> HTML table, metrics down, periods across."""
     head = "".join(f"<th class='num'>{h}</th>" for h, _ in columns)
-    body = ""
-    for i, label in enumerate(GLANCE_ROWS):
-        cells = "".join(f"<td class='num'>{vals[i]}</td>" if vals[i] is not None
-                        else "<td class='num dim'>—</td>" for _, vals in columns)
-        body += f"<tr><td>{label}</td>{cells}</tr>"
+    row = lambda i, label, cls="": (
+        f"<tr{cls}><td>{label}</td>"
+        + "".join(f"<td class='num'>{vals[i]}</td>" if vals[i] is not None
+                  else "<td class='num dim'>—</td>" for _, vals in columns)
+        + "</tr>")
+    body = "".join(row(i, label) for i, label in enumerate(GLANCE_ROWS))
+    body += (f"<tr class='group'><td colspan='{len(columns) + 1}'>Loading time"
+             f"<span class='help' title='{LOADING_HELP}'>?</span></td></tr>")
+    base = len(GLANCE_ROWS)
+    body += "".join(row(base + j, label, " class='sub total'" if label == "Total" else " class='sub'")
+                    for j, label in enumerate(LOADING_ROWS))
     return (f"<div class='glance-wrap'><table class='glance'><thead><tr><th></th>{head}</tr></thead>"
             f"<tbody>{body}</tbody></table></div>")
 
@@ -128,12 +143,16 @@ def render(data, qd):
     # ── at a glance: day, week, month side by side ──
     with st.container(border=True):
         st.markdown("**At a glance**  \n:gray[Day · week · month side by side]")
+        dlv = data.deliveries
         st.markdown(glance_table([
-            (day_label(qd), glance_values(data, day_rolled, pay_day, notes[notes["date"] == qd])),
+            (day_label(qd), glance_values(data, day_rolled, pay_day, notes[notes["date"] == qd],
+                                          dlv[dlv["date"] == qd])),
             (f"Week {wk_label}", glance_values(data, week_rolled, between(pay, wk_start, wk_end),
-                                                between(notes, wk_start, wk_end))),
+                                                between(notes, wk_start, wk_end),
+                                                between(dlv, wk_start, wk_end))),
             (mo_label, glance_values(data, month_rolled, between(pay, mo_start, mo_end),
-                                     between(notes, mo_start, mo_end))),
+                                     between(notes, mo_start, mo_end),
+                                     between(dlv, mo_start, mo_end))),
         ]), unsafe_allow_html=True)
 
     # ── shift timeline ──
