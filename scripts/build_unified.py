@@ -1405,6 +1405,10 @@ def main():
     data["meta"]["date_max"] = dates[-1]
     data["meta"]["window_days"] = str(window_days)
     data["meta"].setdefault("driver_order", ",".join(DRIVER_SENIORITY))
+    # THE GREEN SHEET's variables behind the Min Markup $/gal column; editable in
+    # the Meta sheet like the benchmarks. Target PPH = breakeven $330 + $100.
+    for k, v in (("payroll_hours", "8"), ("span_hours", "6"), ("drive_mins", "20"), ("target_pph", "430")):
+        data["meta"].setdefault(f"markup.{k}", v)
 
     # ── cross-checks: drivers vs payroll ──
     for d in sorted(payroll_dates | set(new_delivery_dates)):
