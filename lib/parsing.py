@@ -20,6 +20,8 @@ EXCEL_EPOCH_OFFSET = 25569  # days between 1899-12-30 and 1970-01-01
 DRIVER_SENIORITY = ["Jeff", "Augustine", "Christopher", "Raul", "Pascual",
                     "Eric", "Bino", "Vicente", "Dan", "Brett", "Mataeo"]
 ALL_SERVICE_TYPES = ["FLEET", "GEN", "TANK", "TANK/SHOW", "GRVTY", "GRVTY/PUMP"]
+# THE GREEN SHEET's variables (Meta keys markup.<name>); target PPH = breakeven 330 + 100
+MARKUP_DEFAULTS = {"payroll_hours": 8.0, "span_hours": 6.0, "drive_mins": 20.0, "target_pph": 430.0}
 
 DELIVERY_COLUMNS = ["Date", "Driver", "Stop", "SO", "Product", "Gallons", "StopMins",
                     "Units", "Address", "FleetType", "CustType", "GPM",
@@ -186,6 +188,7 @@ class UnifiedData:
     threshold: int
     dvir_mins: int            # post-trip allowance after yard arrival; also the pre/post DVIR block
     driver_order: list
+    markup: dict              # green-sheet inputs: payroll_hours, span_hours, drive_mins, target_pph
     deliveries_no_fleet: pd.DataFrame = field(default=None)
     rolled_history: pd.DataFrame = field(default=None)
     averages: pd.DataFrame = field(default=None)
@@ -523,10 +526,19 @@ def load_unified(file_bytes: bytes) -> UnifiedData:
     order = [d.strip() for d in (meta.get("driver_order") or "").split(",") if d.strip()]
     driver_order = order or list(DRIVER_SENIORITY)
 
+    markup = {}
+    for k, default in MARKUP_DEFAULTS.items():
+        try:
+            v = float(meta.get(f"markup.{k}", "") or default)
+            markup[k] = v if v > 0 else default
+        except ValueError:
+            markup[k] = default
+
     data = UnifiedData(deliveries=deliveries, payroll=payroll, punches=punches,
                        customers=customers, notes=notes, meta=meta, product_map=product_map,
                        benchmarks=benchmarks, shift_split_time=shift_split,
-                       threshold=threshold, dvir_mins=dvir_mins, driver_order=driver_order)
+                       threshold=threshold, dvir_mins=dvir_mins, driver_order=driver_order,
+                       markup=markup)
     data.deliveries_no_fleet = deliveries[~deliveries["is_fleet"] & ~deliveries["is_terminal"]].reset_index(drop=True)
 
     # rolled history + averages are computed once here (calc imports parsing, not vice versa)

@@ -62,6 +62,21 @@ def build_averages(rolled):
     return pd.DataFrame(rows, index=pd.MultiIndex.from_tuples(idx, names=["address", "stop"]))
 
 
+# ─── Green sheet: lowest profitable markup ───────────────────────────────────
+
+def min_markup(gallons, stop_mins, p):
+    """Port of THE GREEN SHEET: the lowest $/gal markup at which a stop earns
+    the target profit per hour. The stop is charged its own minutes scaled by
+    payroll hours ÷ first-to-last-stop hours (the day's off-stop time spread
+    across stops) plus one average drive. Freight is taken as $0.
+    `p` holds payroll_hours, span_hours, drive_mins, target_pph."""
+    if (gallons is None or pd.isna(gallons) or gallons <= 0
+            or stop_mins is None or pd.isna(stop_mins) or stop_mins <= 0 or not p["span_hours"]):
+        return None
+    cost_hours = (stop_mins * p["payroll_hours"] / p["span_hours"] + p["drive_mins"]) / 60
+    return cost_hours * p["target_pph"] / gallons
+
+
 def pct_diff(val, avg):
     if avg is None or pd.isna(avg) or avg == 0 or val is None or pd.isna(val):
         return None

@@ -6,6 +6,7 @@ import streamlit as st
 
 from lib import calc, theme
 from lib.parsing import fmt_hhmmss, fmt_hmm
+from views.common import MARKUP_COL, fmt_markup, markup_column_config, markup_params
 
 
 def render(data, rd):
@@ -61,12 +62,14 @@ def render(data, rd):
         st.info("No stops match the current filters.")
         return
 
+    mk = markup_params(data)
     view = pd.DataFrame({
         "Driver": df["driver"], "Stop": df["stop"] + df["is_new"].map({True: "  🆕", False: ""}),
         "Address": df["address"], "Type": df["fleet_type"], "Products": df["product_label"],
         "Gallons": df["gallons"], "vs Avg %": df["gal_pct"],
         "Stop Time": df["stop_mins"].map(fmt_hmm), "Time vs Avg %": df["time_pct"],
         "Units": df["units"], "GPM": df["gpm"],
+        MARKUP_COL: [calc.min_markup(g, m, mk) for g, m in zip(df["gallons"], df["stop_mins"])],
         "Min/Unit": df["min_unit"].map(lambda v: fmt_hhmmss(v) if v is not None else "—"),
         "M/U vs Avg %": df["min_unit_pct"],
         "vs Bmk": df["bmk_diff"].map(lambda v: ("+" if v > 0 else "−") + fmt_hhmmss(abs(v)) if v is not None else "—"),
@@ -88,8 +91,10 @@ def render(data, rd):
     styled = (view.style
               .apply(style_pct, subset=pct_cols)
               .format({"Gallons": "{:,.1f}", "GPM": lambda v: f"{v:.2f}" if pd.notna(v) else "—",
-                       **{c: (lambda v: f"{v:+.1f}%" if pd.notna(v) else "—") for c in pct_cols}}))
-    st.dataframe(styled, hide_index=True, width="stretch", height=520)
+                       **{c: (lambda v: f"{v:+.1f}%" if pd.notna(v) else "—") for c in pct_cols}})
+              .format(fmt_markup, subset=[MARKUP_COL], na_rep="—"))
+    st.dataframe(styled, hide_index=True, width="stretch", height=520,
+                 column_config=markup_column_config(mk, "this delivery's gallons and stop time"))
 
     m1, m2, m3, m4 = st.columns(4)
     m1.metric("Stops", len(df))

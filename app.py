@@ -59,6 +59,11 @@ if uploaded is not None:
             # reseed from the new file: its Meta threshold and its latest date
             st.session_state.pop("threshold", None)
             st.session_state.pop("sel_date", None)
+            st.session_state.pop("stop_avg_range", None)
+            st.session_state.pop("stop_avg_range_saved", None)
+            for k in list(st.session_state):
+                if k.startswith("markup_"):
+                    st.session_state.pop(k)
         except UnifiedFileError as e:
             st.error(str(e))
             st.stop()
@@ -119,6 +124,19 @@ with side.expander("About this file"):
             f"`{ft}` → {fmt_hhmmss(data.benchmarks[ft])}" for ft in ALL_SERVICE_TYPES if ft in data.benchmarks))
     st.caption("These travel inside the file (Meta sheet). To change one, edit the Meta sheet "
                "in Excel before emailing — it propagates to everyone.")
+with side.expander("Markup calculator (green sheet)"):
+    st.caption("Drives the **Min Markup $/gal** column on Daily Route Performance and Stop "
+               "Averages. Starts from the file's Meta sheet (`markup.*` keys); changes here "
+               "last this session only.")
+    for k, label, step, hlp in [
+            ("payroll_hours", "Payroll hours", 0.5, "Paid hours in a driver's day."),
+            ("span_hours", "Hours first stop to last", 0.5,
+             "Hours from the start of the first stop to the end of the last."),
+            ("drive_mins", "Average drive between stops (min)", 1.0, None),
+            ("target_pph", "Target profit per hour ($)", 10.0,
+             "Green sheet: breakeven $330 + $100 = $430.")]:
+        st.session_state.setdefault(f"markup_{k}", float(data.markup[k]))
+        st.number_input(label, min_value=step, step=step, key=f"markup_{k}", help=hlp)
 side.caption("🔒 Data lives in this session's memory only. Closing the tab (or idling out) "
              "clears it. Nothing is written to the server's disk.")
 
