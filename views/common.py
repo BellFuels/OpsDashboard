@@ -39,5 +39,25 @@ def markup_column_config(p, basis):
         f"${p['target_pph']:,.0f} ÷ gallons. Freight counted as $0."))}
 
 
+ACTUAL_MK_COL = "Actual $/gal"
+PPH_COL = "Actual PPH"
+
+
+def pph_column_config(p):
+    """Header tooltips for where a stop lands on the green sheet."""
+    import streamlit as st
+    bands = (f"Red below ${p['breakeven_pph']:,.0f}/hr breakeven, amber up to the "
+             f"${p['target_pph']:,.0f}/hr target, green at or above it.")
+    return {
+        ACTUAL_MK_COL: st.column_config.Column(help=(
+            "This stop's real gross profit per gallon (sale excl taxes, freight in, minus OPIS "
+            f"cost; DEF and fees included). Compare with Min Markup $/gal. {bands}")),
+        PPH_COL: st.column_config.Column(help=(
+            "Where the stop lands on the green sheet: its real gross profit ÷ the green sheet's "
+            f"cost hours (stop min × {p['payroll_hours']:g} ÷ {p['span_hours']:g} + "
+            f"{p['drive_mins']:g} drive min, ÷ 60). {bands} — when there's no stop time.")),
+    }
+
+
 def fmt_markup(v):
     return f"${v:.3f}" if v is not None and v == v else "—"

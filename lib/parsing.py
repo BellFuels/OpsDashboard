@@ -21,7 +21,20 @@ DRIVER_SENIORITY = ["Jeff", "Augustine", "Christopher", "Raul", "Pascual",
                     "Eric", "Bino", "Vicente", "Dan", "Brett", "Mataeo"]
 ALL_SERVICE_TYPES = ["FLEET", "GEN", "TANK", "TANK/SHOW", "GRVTY", "GRVTY/PUMP"]
 # THE GREEN SHEET's variables (Meta keys markup.<name>); target PPH = breakeven 330 + 100
-MARKUP_DEFAULTS = {"payroll_hours": 8.0, "span_hours": 6.0, "drive_mins": 20.0, "target_pph": 430.0}
+# Dispatch logs loads a contracted carrier delivers (Fuel It Mobile transports,
+# "- 3RD PARTY" stops) under a placeholder driver. They are real, billed sales:
+# kept in gallons and gross profit, but left out of figures about Bell's drivers
+# and truck time. The builder renames them; this also catches older files.
+THIRD_PARTY_DRIVER = "3RD PARTY CARRIER"
+THIRD_PARTY_RE = re.compile(r"\bTEST DRIVER\b", re.I)
+
+
+def is_third_party(driver):
+    return str(driver or "") == THIRD_PARTY_DRIVER
+
+
+MARKUP_DEFAULTS = {"payroll_hours": 8.0, "span_hours": 6.0, "drive_mins": 20.0,
+                   "breakeven_pph": 330.0, "target_pph": 430.0}
 
 DELIVERY_COLUMNS = ["Date", "Driver", "Stop", "SO", "Product", "Gallons", "StopMins",
                     "Units", "Address", "FleetType", "CustType", "GPM",
@@ -189,6 +202,9 @@ class UnifiedData:
     dvir_mins: int            # post-trip allowance after yard arrival; also the pre/post DVIR block
     driver_order: list
     markup: dict              # green-sheet inputs: payroll_hours, span_hours, drive_mins, target_pph
+    # one row per billing line: date, order, so, match, account, product, qty,
+    # sale, cost, gross_profit (empty for files built before gross profit)
+    billing: pd.DataFrame = field(default=None)
     deliveries_no_fleet: pd.DataFrame = field(default=None)
     rolled_history: pd.DataFrame = field(default=None)
     averages: pd.DataFrame = field(default=None)
@@ -431,6 +447,8 @@ def load_unified(file_bytes: bytes) -> UnifiedData:
         if not drows:
             raise UnifiedFileError("The unified file has no delivery rows.")
         deliveries = pd.DataFrame(drows)
+        if len(deliveries):
+            deliveries.loc[deliveries["driver"].str.contains(THIRD_PARTY_RE), "driver"] = THIRD_PARTY_DRIVER
 
         # Payroll
         prows = []
@@ -461,6 +479,23 @@ def load_unified(file_bytes: bytes) -> UnifiedData:
                           "kind": {"downtime": "Downtime", "terminal": "Terminal"}.get(cell_str(col(4)).lower(), "Note"),
                           "note": cell_str(col(5))})
         notes = pd.DataFrame(nrows, columns=["date", "driver", "start", "end", "kind", "note"])
+
+        # Billing (gross profit per billing line, worked out by the builder from
+        # the Billing Worksheet and the day's OPIS email); older files have none.
+        brows = []
+        for raw in _sheet_lists(wb, "Billing"):
+            def col(i):
+                return raw[i] if i < len(raw) else None
+            date = extract_date_iso(col(0))
+            if not date:
+                continue
+            brows.append({"date": date, "order": cell_str(col(1)), "so": cell_str(col(2)),
+                          "match": cell_str(col(3)), "account": cell_str(col(4)),
+                          "product": cell_str(col(6)), "qty": parse_float(col(7)) or 0.0,
+                          "sale": parse_float(col(8)), "cost": parse_float(col(11)),
+                          "gross_profit": parse_float(col(12))})
+        billing = pd.DataFrame(brows, columns=["date", "order", "so", "match", "account", "product",
+                                               "qty", "sale", "cost", "gross_profit"])
 
         payroll = pd.DataFrame(prows, columns=["date", "driver", "hours", "clock_in",
                                                "clock_out", "back_to_yard",
@@ -538,7 +573,7 @@ def load_unified(file_bytes: bytes) -> UnifiedData:
                        customers=customers, notes=notes, meta=meta, product_map=product_map,
                        benchmarks=benchmarks, shift_split_time=shift_split,
                        threshold=threshold, dvir_mins=dvir_mins, driver_order=driver_order,
-                       markup=markup)
+                       markup=markup, billing=billing)
     data.deliveries_no_fleet = deliveries[~deliveries["is_fleet"] & ~deliveries["is_terminal"]].reset_index(drop=True)
 
     # rolled history + averages are computed once here (calc imports parsing, not vice versa)

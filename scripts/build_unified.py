@@ -33,6 +33,12 @@ DEFAULT_WINDOW_DAYS = 180
 
 FLEET_FUEL_FILTER = re.compile(r"FLEET FUEL", re.I)
 TERMINAL_FILTER = re.compile(r"BELL FUELS SERVICE|TERMINAL LOADING", re.I)
+# Dispatch logs loads a contracted carrier delivers (Fuel It Mobile transports,
+# "- 3RD PARTY" stops) under a placeholder "SLX TEST DRIVER". They are real, billed
+# sales, so they're kept — under a clear name the dashboard leaves out of
+# driver-only figures.
+THIRD_PARTY_RE = re.compile(r"\bTEST DRIVER\b", re.I)
+THIRD_PARTY_DRIVER = "3RD PARTY CARRIER"
 
 DRIVER_SENIORITY = ["Jeff", "Augustine", "Christopher", "Raul", "Pascual",
                     "Eric", "Bino", "Vicente", "Dan", "Brett", "Mataeo"]
@@ -67,6 +73,13 @@ CUSTOMER_COLUMNS = ["Name", "Account", "CustType", "SvcType", "Street", "City", 
 # counts toward the driver's downtime exactly like the Payroll sheet's manual columns.
 NOTES_COLUMNS = ["Date", "Driver", "Start", "End", "Kind", "Note"]
 DOWNTIME_RE = re.compile(r"\bdown\s?time\b", re.I)
+# Gross profit, one row per billing line (Billing Worksheet's S&P_CALCULATOR sheet).
+# Order is billing's order number; SO is the delivery it matched (Match: "order",
+# "gallons" = fallback on date + gallons, or "unmatched"). Sale is Total Sale
+# Excluding Taxes with freight left in; Cost = Qty x UnitCost from the day's OPIS.
+BILLING_COLUMNS = ["Date", "Order", "SO", "Match", "Account", "Driver", "Product",
+                   "Qty", "Sale", "UnitCost", "CostSource", "Cost", "GrossProfit"]
+BILLING_FLOAT_COLUMNS = ("Qty", "Sale", "UnitCost", "Cost", "GrossProfit")
 
 
 TERMINAL_NOTE_RE = re.compile(r"\bterminal\b", re.I)
@@ -426,16 +439,21 @@ def read_xls_sheet(path, sheet_name):
 
 
 def classify_file(path):
-    """Identify a file by content. Returns one of:
-    'payroll_pdf', 'efficiency', 'transact', 'customers', 'unified', 'payroll_sheet', 'unknown'."""
+    """Identify a file by content. Returns one of: 'payroll_pdf', 'efficiency',
+    'transact', 'customers', 'unified', 'payroll_sheet', 'billing', 'opis', 'unknown'."""
     with open(path, "rb") as f:
         magic = f.read(8)
     if magic[:4] == b"%PDF" or path.lower().endswith(".pdf"):
         return "payroll_pdf"
+    # Outlook .msg is OLE like a binary .xls, so test it before xlrd sees it
+    if path.lower().endswith(".msg") or (magic[:4] == b"\xd0\xcf\x11\xe0" and opis_text(path)):
+        return "opis" if opis_text(path) else "unknown"
     try:
         dicts, lists, sheet_names = read_tabular(path)
     except Exception:
         return "unknown"
+    if BILLING_SHEET in sheet_names:
+        return "billing"
     if "ALL" in sheet_names:
         return "customers"
     if "Deliveries" in sheet_names and "Meta" in sheet_names:
@@ -1017,13 +1035,161 @@ def parse_payroll_sheet(path, name_map):
     return {"date": file_date, "entries": entries, "unmapped": unmapped}
 
 
+# ─── Gross profit (Billing Worksheet + OPIS email) ───────────────────────────
+
+BILLING_SHEET = "S&P_CALCULATOR"
+OPIS_E10 = "OPIS GROSS RFG ETHANOL(10%) PRICES"
+OPIS_ULSD = "OPIS GROSS ULTRA LOW SULFUR DISTILLATE PRICES"
+OPIS_ULSD_RD = "OPIS GROSS ULTRA LOW SULFUR RED DYE DISTILLATE PRICES"
+OPIS_KERO = "OPIS GROSS ULTRA LOW SULFUR KEROSENE PRICES"
+OPIS_B17 = "OPIS GROSS WHOLESALE B17 SME BIODIESEL PRICES"
+OPIS_B20 = "OPIS GROSS WHOLESALE B20 SME BIODIESEL PRICES"
+# product code -> (OPIS section, column) priced at that section's CONT AVG. D2
+# codes cost the same as plain: no D2 additive adder (decided 2026-10-06).
+OPIS_PRODUCTS = {
+    "070": (OPIS_E10, "Unl"), "071": (OPIS_E10, "Mid"), "072": (OPIS_E10, "Pre"), "076": (OPIS_E10, "Pre"),
+    "190": (OPIS_ULSD, "No.2"), "191": (OPIS_ULSD, "No.2"), "194": (OPIS_ULSD, "No.1"),
+    "192": (OPIS_ULSD_RD, "No.2"), "193": (OPIS_ULSD_RD, "No.2"), "196": (OPIS_ULSD_RD, "No.1"),
+    "033": (OPIS_KERO, "KERO"),
+    "200": (OPIS_B20, "No.2"), "201": (OPIS_B20, "No.2"), "202": (OPIS_B20, "RD"), "203": (OPIS_B20, "RD"),
+    "700": (OPIS_B17, "No.2"), "701": (OPIS_B17, "No.2"), "702": (OPIS_B17, "RD"), "703": (OPIS_B17, "RD"),
+}
+# OPIS doesn't price DEF; these master-price-list costs don't change ($ per billed unit)
+DEF_UNIT_COST = {"185": 1.93, "186": 8.45}
+# the worksheet's PREVIOUS DAY PRICING rows that carry a plain OPIS cost, for the
+# cross-check (its other D2 rows add $0.024, which we don't)
+OPIS_CHECK_CODES = ("070", "071", "072", "076", "033", "190", "192", "194", "196", "201", "203")
+
+_opis_text_cache = {}
+
+
+def opis_text(path):
+    """The OPIS rack report's text from a saved Outlook .msg ('' if it isn't one).
+    Outlook stores the plain-text body as UTF-16, so take the longest UTF-16 run
+    that carries the report header."""
+    if path not in _opis_text_cache:
+        with open(path, "rb") as f:
+            raw = f.read()
+        runs = (r.decode("utf-16le") for r in re.findall(rb"(?:[\x09\x0a\x0d\x20-\x7e]\x00){40,}", raw))
+        hits = [t for t in runs if "OPIS CONTRACT BENCHMARK" in t]
+        _opis_text_cache[path] = max(hits, key=len) if hits else ""
+    return _opis_text_cache[path]
+
+
+def parse_opis(path):
+    """-> {"date": ISO, "sections": {title: {column: $/gal}}} from each section's
+    CONT AVG row (cents in the report). Repeated column names (B20's two RD
+    columns) keep the first."""
+    text = opis_text(path)
+    m = re.search(r"(\d{4}-\d{2}-\d{2}) \d{2}:\d{2}:\d{2}", text)
+    sections, title, cols = {}, None, []
+    for line in text.splitlines():
+        t = re.search(r"\*\*(OPIS [^*]+)\*\*", line)
+        if t:
+            title, cols = t.group(1).strip(), []
+            continue
+        if title and line.strip().startswith("Terms"):
+            cols = [c for c in line.split()[1:] if c not in ("Move", "Date", "Time")]
+            continue
+        if title and cols and line.startswith("CONT AVG") and title not in sections:
+            vals = re.findall(r"-- --|\d+\.\d+", line.split(None, 2)[-1])
+            prices = {}
+            for c, v in zip(cols, vals):
+                if c not in prices:
+                    prices[c] = None if v == "-- --" else round(float(v) / 100, 4)
+            sections[title] = prices
+    return {"date": m.group(1) if m else "", "sections": sections}
+
+
+def opis_unit_cost(opis, code):
+    sec = OPIS_PRODUCTS.get(code)
+    return (opis["sections"].get(sec[0]) or {}).get(sec[1]) if sec else None
+
+
+def parse_billing(path):
+    """Billing lines from the S&P_CALCULATOR sheet: one dict per line with an
+    Account #; the trailing =SUM totals row has none and is skipped."""
+    wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
+    try:
+        rows = list(wb[BILLING_SHEET].iter_rows(values_only=True))
+        pricing = list(wb["PREVIOUS DAY PRICING"].iter_rows(values_only=True)) \
+            if "PREVIOUS DAY PRICING" in wb.sheetnames else []
+    finally:
+        wb.close()
+    hi = next((i for i, r in enumerate(rows) if r and cell_str(r[0]) == "Account #"), None)
+    if hi is None:
+        raise ValueError(f"{BILLING_SHEET}: no 'Account #' header row")
+    hdr = [cell_str(h) for h in rows[hi]]
+    col = lambda name: hdr.index(name)
+    c_acct, c_name, c_order = col("Account #"), col("Account Name"), col("Order #")
+    c_prod, c_qty, c_sale = col("Product/Container"), col("Gross Qty"), col("Total Sale Excluding Taxes")
+    c_drv, c_ship = col("Driver"), col("Shipment Date")
+    lines = []
+    for r in rows[hi + 1:]:
+        if not r or not cell_str(r[c_acct]):
+            continue
+        lines.append({"Date": extract_date_iso(r[c_ship]), "Order": cell_str(r[c_order]),
+                      "Account": cell_str(r[c_name]), "Driver": cell_str(r[c_drv]),
+                      "Product": cell_str(r[c_prod]).split("/")[0], "Qty": parse_float(r[c_qty]) or 0.0,
+                      "Sale": parse_float(r[c_sale])})
+    if lines and all(l["Sale"] is None for l in lines):
+        raise ValueError(f"{BILLING_SHEET}: no Total Sale values — open and save the workbook in Excel so its formulas calculate")
+    # PREVIOUS DAY PRICING: CODE (col J) -> CONTRACT COST (col K)
+    contract = {}
+    for r in pricing:
+        if r and len(r) > 10 and cell_str(r[9]) and isinstance(r[10], (int, float)):
+            contract[cell_str(r[9])] = float(r[10])
+    return lines, contract
+
+
+def compute_billing(lines, opis, deliveries):
+    """Billing lines -> Billing-sheet rows: match each line to a delivery, cost it
+    and work out gross profit (sale excl taxes, freight in, minus cost)."""
+    by_date = {}
+    for d in deliveries:
+        by_date.setdefault(d["Date"], []).append(d)
+    billed_orders = {(l["Date"], l["Order"]) for l in lines}
+    used_fallback = set()
+    out = []
+    for l in lines:
+        day = by_date.get(l["Date"], [])
+        same_so = [d for d in day if d["SO"] == l["Order"]]
+        hit, how = None, "unmatched"
+        if same_so:
+            hit = next((d for d in same_so if abs((d["Gallons"] or 0) - l["Qty"]) < 0.05), same_so[0])
+            how = "order"
+        elif l["Qty"] > 0:
+            # same date + same gallons, among deliveries billing never names — only
+            # when exactly one fits (DMK billed to Stayfull under another order)
+            fits = [d for d in day if (d["Date"], d["SO"]) not in billed_orders
+                    and id(d) not in used_fallback and abs((d["Gallons"] or 0) - l["Qty"]) < 0.05]
+            if len(fits) == 1:
+                hit, how = fits[0], "gallons"
+                used_fallback.add(id(hit))
+        code = l["Product"]
+        if not code and not l["Qty"]:
+            unit, src = 0.0, "Fee"
+        elif code in DEF_UNIT_COST:
+            # billing codes DEF jugs as bulk 185; the delivery feed knows it's a 186 jug
+            jug = code == "186" or (hit is not None and str(hit["Product"]).startswith("186"))
+            unit, src = DEF_UNIT_COST["186" if jug else "185"], "DEF fixed"
+        else:
+            unit = opis_unit_cost(opis, code)
+            src = "OPIS" if unit is not None else "No price"
+        cost = round(l["Qty"] * unit, 2) if unit is not None else None
+        gp = round(l["Sale"] - cost, 2) if cost is not None and l["Sale"] is not None else None
+        out.append({**l, "SO": hit["SO"] if hit else "", "Match": how,
+                    "UnitCost": unit, "CostSource": src, "Cost": cost, "GrossProfit": gp})
+    return out
+
+
 # ─── Unified workbook I/O ────────────────────────────────────────────────────
 
 def blank_unified():
     meta = {"schema_version": str(SCHEMA_VERSION), "window_days": str(DEFAULT_WINDOW_DAYS),
             "shift_split_time": "12:00", "threshold": "20", "dvir_mins": "20",
             "driver_order": ",".join(DRIVER_SENIORITY)}
-    return {"deliveries": [], "payroll": [], "punches": [], "customers": [], "notes": [],
+    return {"deliveries": [], "payroll": [], "punches": [], "customers": [], "notes": [], "billing": [],
             "name_map": dict(DEFAULT_NAME_MAP), "meta": meta}
 
 
@@ -1050,7 +1216,7 @@ def read_unified(path):
                     row[col] = clock_text(v)
                 elif col in ("Arrival", "Departure"):
                     row[col] = arrival_to_text(v)
-                elif col in ("Gallons", "GPM", "Hours"):
+                elif col in ("Gallons", "GPM", "Hours") or col in BILLING_FLOAT_COLUMNS:
                     row[col] = parse_float(v)
                 elif col in ("StopMins", "Units", "Seq"):
                     f = parse_float(v)
@@ -1065,6 +1231,7 @@ def read_unified(path):
     data["punches"] = sheet_rows("Punches", PUNCH_COLUMNS)
     data["customers"] = sheet_rows("Customers", CUSTOMER_COLUMNS)
     data["notes"] = sheet_rows("Notes", NOTES_COLUMNS)
+    data["billing"] = sheet_rows("Billing", BILLING_COLUMNS)
     if "NameMap" in wb.sheetnames:
         it = wb["NameMap"].iter_rows(values_only=True)
         next(it, None)
@@ -1108,6 +1275,8 @@ def write_unified(path, data, build_date):
     add_sheet("Customers", CUSTOMER_COLUMNS, data["customers"], key=lambda r: r["Name"])
     add_sheet("Notes", NOTES_COLUMNS, data.get("notes", []),
               key=lambda r: (r["Date"], r["Driver"], r["Start"]))
+    add_sheet("Billing", BILLING_COLUMNS, data.get("billing", []),
+              key=lambda r: (r["Date"], r["Order"], r["Product"], r["Qty"] or 0))
 
     nm = wb.create_sheet("NameMap")
     nm.append(["PayrollName", "DisplayName"])
@@ -1233,7 +1402,7 @@ def main():
         inbox_files = [os.path.join(args.inbox, f) for f in sorted(os.listdir(args.inbox))
                        if not f.startswith(".") and os.path.isfile(os.path.join(args.inbox, f))]
     classified = {"efficiency": [], "transact": [], "payroll_pdf": [], "payroll_sheet": [],
-                  "customers": [], "unified": [], "unknown": []}
+                  "customers": [], "unified": [], "billing": [], "opis": [], "unknown": []}
     for f in inbox_files:
         kind = classify_file(f)
         classified[kind].append(f)
@@ -1245,8 +1414,9 @@ def main():
         print("\nERROR: found a Transact View but no Efficiency Report — need both to join addresses/products.")
         sys.exit(1)
     if not args.seed and not classified["efficiency"] and not classified["payroll_pdf"] \
-            and not classified["payroll_sheet"] and not classified["customers"]:
-        print("\nERROR: nothing to process — no efficiency report, payroll, or customer list in inbox.")
+            and not classified["payroll_sheet"] and not classified["customers"] \
+            and not classified["billing"]:
+        print("\nERROR: nothing to process — no efficiency report, payroll, customer list, or billing worksheet in inbox.")
         sys.exit(1)
     if classified["efficiency"] and not classified["transact"]:
         print("\nERROR: found an Efficiency Report but no Transact View — need both to join addresses/products.")
@@ -1328,6 +1498,13 @@ def main():
             print(f"\nEnrichment: {len(targets)} rows checked against customer list; "
                   f"{len(unmatched_stops)} stop name(s) with no match")
 
+    # ── contracted-carrier loads: rename the placeholder driver everywhere ──
+    carrier = [r for r in data["deliveries"] if THIRD_PARTY_RE.search(r["Driver"] or "")]
+    for r in carrier:
+        r["Driver"] = THIRD_PARTY_DRIVER
+    if carrier:
+        print(f"3rd-party carrier: {len(carrier)} row(s) renamed to {THIRD_PARTY_DRIVER}")
+
     # ── self-heal missing types from past deliveries of the same stop ──
     healed = heal_missing_types(data["deliveries"])
     if healed:
@@ -1342,6 +1519,53 @@ def main():
     if data["deliveries"]:
         print(f"  {have} of {len(data['deliveries'])} rows now carry a town "
               f"({100 * have / len(data['deliveries']):.0f}%)")
+
+    # ── gross profit: Billing Worksheet + the same day's OPIS email ──
+    if classified["opis"] and not classified["billing"]:
+        print("\nWARNING: OPIS email with no Billing Worksheet — gross profit skipped.")
+    if classified["billing"]:
+        opis_by_date = {}
+        for f in classified["opis"]:
+            o = parse_opis(f)
+            if o["date"]:
+                opis_by_date[o["date"]] = o
+        for f in classified["billing"]:
+            try:
+                lines, contract = parse_billing(f)
+            except (ValueError, KeyError) as e:
+                print(f"\nERROR parsing billing worksheet {os.path.basename(f)}: {e}")
+                sys.exit(1)
+            for bdate in sorted({l["Date"] for l in lines if l["Date"]}):
+                opis = opis_by_date.get(bdate)
+                if not opis:
+                    print(f"\nWARNING: billing for {bdate} but no OPIS email for that date "
+                          f"(have: {', '.join(sorted(opis_by_date)) or 'none'}) — gross profit skipped.")
+                    continue
+                rows = compute_billing([l for l in lines if l["Date"] == bdate], opis, data["deliveries"])
+                data["billing"] = replace_by_date(data.get("billing", []), rows, {bdate})
+                sale = sum(r["Sale"] or 0 for r in rows)
+                gp = sum(r["GrossProfit"] or 0 for r in rows)
+                by_match = {k: sum(1 for r in rows if r["Match"] == k) for k in ("order", "gallons", "unmatched")}
+                print(f"\nGross profit {bdate}: {len(rows)} billing lines, sale excl taxes ${sale:,.2f}, "
+                      f"gross profit ${gp:,.2f}")
+                print(f"  matched to deliveries: {by_match['order']} by order, "
+                      f"{by_match['gallons']} by gallons, {by_match['unmatched']} unmatched")
+                for r in rows:
+                    if r["Match"] == "gallons":
+                        print(f"  matched by gallons: billing order {r['Order']} ({r['Account']}) "
+                              f"-> delivery {r['SO']}, {r['Qty']:g} gal — check it")
+                    elif r["Match"] == "unmatched":
+                        print(f"  WARNING unmatched: billing order {r['Order']} ({r['Account']}), "
+                              f"{r['Product'] or 'no product'} {r['Qty']:g}")
+                    if r["CostSource"] == "No price":
+                        print(f"  WARNING no OPIS price for product {r['Product']} "
+                              f"(order {r['Order']}) — no gross profit on that line")
+                # the worksheet's costs come from the master price list; it should agree with OPIS
+                for code in OPIS_CHECK_CODES:
+                    w, o = contract.get(code), opis_unit_cost(opis, code)
+                    if w and o is not None and abs(w - o) > 0.00005:
+                        print(f"  WARNING price check {code}: OPIS ${o:.4f} vs worksheet ${w:.4f} "
+                              f"— master price list may be stale")
 
     # ── payroll ──
     unmapped_names = set()
@@ -1386,6 +1610,7 @@ def main():
     data["payroll"] = prune_window(data["payroll"], build_date, window_days)
     data["punches"] = prune_window(data["punches"], build_date, window_days)
     data["notes"] = prune_window(data.get("notes", []), build_date, window_days)
+    data["billing"] = prune_window(data.get("billing", []), build_date, window_days)
     if before != len(data["deliveries"]):
         print(f"\nWindow trim: dropped {before - len(data['deliveries'])} delivery rows "
               f"older than {window_days} days")
@@ -1406,14 +1631,16 @@ def main():
     data["meta"]["window_days"] = str(window_days)
     data["meta"].setdefault("driver_order", ",".join(DRIVER_SENIORITY))
     # THE GREEN SHEET's variables behind the Min Markup $/gal column; editable in
-    # the Meta sheet like the benchmarks. Target PPH = breakeven $330 + $100.
-    for k, v in (("payroll_hours", "8"), ("span_hours", "6"), ("drive_mins", "20"), ("target_pph", "430")):
+    # the Meta sheet like the benchmarks. Target PPH = breakeven $330 + $100;
+    # the dashboard bands each stop's real profit/hr against both.
+    for k, v in (("payroll_hours", "8"), ("span_hours", "6"), ("drive_mins", "20"),
+                 ("breakeven_pph", "330"), ("target_pph", "430")):
         data["meta"].setdefault(f"markup.{k}", v)
 
     # ── cross-checks: drivers vs payroll ──
     for d in sorted(payroll_dates | set(new_delivery_dates)):
         deliv_drivers = {r["Driver"].split(" ")[0].lower() for r in data["deliveries"]
-                         if r["Date"] == d and r["Driver"]}
+                         if r["Date"] == d and r["Driver"] and r["Driver"] != THIRD_PARTY_DRIVER}
         pay_drivers = {r["Driver"].split(" ")[0].lower() for r in data["payroll"]
                        if r["Date"] == d and r["Driver"]}
         if deliv_drivers and pay_drivers:

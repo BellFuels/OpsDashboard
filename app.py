@@ -126,13 +126,16 @@ with side.expander("About this file"):
                "in Excel before emailing — it propagates to everyone.")
 with side.expander("Markup calculator (green sheet)"):
     st.caption("Drives the **Min Markup $/gal** column on Daily Route Performance and Stop "
-               "Averages. Starts from the file's Meta sheet (`markup.*` keys); changes here "
+               "Averages, and where each stop lands (Actual PPH and the Quick View green-sheet "
+               "chart). Starts from the file's Meta sheet (`markup.*` keys); changes here "
                "last this session only.")
     for k, label, step, hlp in [
             ("payroll_hours", "Payroll hours", 0.5, "Paid hours in a driver's day."),
             ("span_hours", "Hours first stop to last", 0.5,
              "Hours from the start of the first stop to the end of the last."),
             ("drive_mins", "Average drive between stops (min)", 1.0, None),
+            ("breakeven_pph", "Breakeven profit per hour ($)", 10.0,
+             "Green sheet breakeven. Stops earning less per hour land red."),
             ("target_pph", "Target profit per hour ($)", 10.0,
              "Green sheet: breakeven $330 + $100 = $430.")]:
         st.session_state.setdefault(f"markup_{k}", float(data.markup[k]))

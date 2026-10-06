@@ -109,6 +109,9 @@ h1, h2, h3, h4, h5, h6 {{ font-family: {DISPLAY}; font-weight: 600; letter-spaci
 .gal-shift {{ display: flex; flex-direction: column; gap: 2px; padding: 12px 14px; background: {CARD_BG_2}; border-radius: 8px; }}
 .gal-shift .k {{ font-size: 11.5px; color: {MUTED}; }}
 .gal-shift .v {{ font-family: {DISPLAY}; font-weight: 600; font-size: 26px; color: {INK}; line-height: 1.1; }}
+.gal-shift .v.dim {{ color: {MUTED_2}; }}
+.gal-gp {{ grid-column: 1 / -1; }}
+.gal-gp .v {{ color: {GREEN}; font-size: 30px; }}
 .gal-period {{ display: flex; flex-direction: column; gap: 12px; border-left: 1px solid {BORDER_SOFT}; padding-left: 24px; }}
 .gal-period .k {{ font-size: 11.5px; color: {MUTED}; }}
 .gal-period .v {{ font-family: {DISPLAY}; font-weight: 600; font-size: 20px; color: {INK}; line-height: 1.1; }}

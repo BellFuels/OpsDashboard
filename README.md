@@ -2,7 +2,7 @@
 
 The Bell Fuels operations dashboard. Users upload the daily unified workbook
 (`Bell_Unified_<date>.xlsx`, produced by `scripts/build_unified.py` and
-emailed each day) and get five views: Quick View (gallons vs goal, at-a-glance
+emailed each day) and get five views: Quick View (Performance Snapshot: gallons vs goal and gross profit; at-a-glance
 table, shift timeline), Daily Route Performance, Stop Averages, Drivers, and a
 read-only Payroll & HOS grid. One date, picked in the sidebar, drives every
 view; the file's settings sit under "About this file" in the sidebar.

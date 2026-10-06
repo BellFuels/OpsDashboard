@@ -5,8 +5,9 @@ import pandas as pd
 import streamlit as st
 
 from lib import calc, theme
-from lib.parsing import fmt_hhmmss, fmt_hmm
-from views.common import MARKUP_COL, fmt_markup, markup_column_config, markup_params
+from lib.parsing import THIRD_PARTY_DRIVER, fmt_hhmmss, fmt_hmm, is_third_party
+from views.common import (ACTUAL_MK_COL, MARKUP_COL, PPH_COL, fmt_markup, markup_column_config,
+                          markup_params, pph_column_config)
 
 
 def render(data, rd):
@@ -31,6 +32,8 @@ def render(data, rd):
 
     # gal/hr chips
     raw_day = data.deliveries_no_fleet[data.deliveries_no_fleet["date"] == rd]
+    # gal/hr is about Bell's drivers; a contracted carrier's loads aren't
+    raw_day = raw_day[raw_day["driver"] != THIRD_PARTY_DRIVER]
     gal_hr, has_ts = calc.driver_gal_hr(raw_day)
     if not has_ts and len(raw_day):
         st.warning("Gal/hr unavailable — this day's rows lack clock timestamps.")
@@ -75,6 +78,20 @@ def render(data, rd):
         "vs Bmk": df["bmk_diff"].map(lambda v: ("+" if v > 0 else "−") + fmt_hhmmss(abs(v)) if v is not None else "—"),
         "Hist #": df["hist_count"],
     })
+    # where each stop lands on the green sheet — only on days with a billing worksheet
+    stop_gp = calc.stop_gross_profit(data.billing, rd)
+    has_gp = len(stop_gp) > 0
+    if has_gp:
+        gp = df["so"].map(stop_gp)
+        # no profit/hr for a contracted carrier's stops: no Bell truck time
+        pph = [None if is_third_party(d) else calc.actual_pph(g, m, mk)
+               for g, m, d in zip(gp, df["stop_mins"], df["driver"])]
+        at = view.columns.get_loc(MARKUP_COL) + 1
+        view.insert(at, ACTUAL_MK_COL, [g / gal if pd.notna(g) and gal > 0 else None
+                                        for g, gal in zip(gp, df["gallons"])])
+        view.insert(at + 1, PPH_COL, pph)
+        band_bg = {"below": theme.RED_BG, "between": theme.YELLOW_BG, "target": theme.GREEN_FG}
+        bands = [band_bg.get(calc.pph_band(v, mk), "") for v in pph]
     pct_cols = ["vs Avg %", "Time vs Avg %", "M/U vs Avg %"]
     good_dir = {"vs Avg %": "up", "Time vs Avg %": "down", "M/U vs Avg %": "down"}
 
@@ -93,8 +110,16 @@ def render(data, rd):
               .format({"Gallons": "{:,.1f}", "GPM": lambda v: f"{v:.2f}" if pd.notna(v) else "—",
                        **{c: (lambda v: f"{v:+.1f}%" if pd.notna(v) else "—") for c in pct_cols}})
               .format(fmt_markup, subset=[MARKUP_COL], na_rep="—"))
-    st.dataframe(styled, hide_index=True, width="stretch", height=520,
-                 column_config=markup_column_config(mk, "this delivery's gallons and stop time"))
+    col_config = markup_column_config(mk, "this delivery's gallons and stop time")
+    if has_gp:
+        # Actual $/gal and Actual PPH share one colour: actual markup clears the
+        # minimum exactly when profit/hr clears the target
+        styled = (styled
+                  .apply(lambda col: bands, subset=[ACTUAL_MK_COL, PPH_COL])
+                  .format(fmt_markup, subset=[ACTUAL_MK_COL], na_rep="—")
+                  .format(lambda v: f"${v:,.0f}" if pd.notna(v) else "—", subset=[PPH_COL]))
+        col_config.update(pph_column_config(mk))
+    st.dataframe(styled, hide_index=True, width="stretch", height=520, column_config=col_config)
 
     m1, m2, m3, m4 = st.columns(4)
     m1.metric("Stops", len(df))

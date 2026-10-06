@@ -70,11 +70,42 @@ def min_markup(gallons, stop_mins, p):
     payroll hours ÷ first-to-last-stop hours (the day's off-stop time spread
     across stops) plus one average drive. Freight is taken as $0.
     `p` holds payroll_hours, span_hours, drive_mins, target_pph."""
-    if (gallons is None or pd.isna(gallons) or gallons <= 0
-            or stop_mins is None or pd.isna(stop_mins) or stop_mins <= 0 or not p["span_hours"]):
+    hours = cost_hours(stop_mins, p)
+    if hours is None or gallons is None or pd.isna(gallons) or gallons <= 0:
         return None
-    cost_hours = (stop_mins * p["payroll_hours"] / p["span_hours"] + p["drive_mins"]) / 60
-    return cost_hours * p["target_pph"] / gallons
+    return hours * p["target_pph"] / gallons
+
+
+def cost_hours(stop_mins, p):
+    """The truck hours the green sheet charges a stop: its own minutes scaled by
+    payroll hours ÷ first-to-last-stop hours, plus one average drive. None with
+    no stop time — 0 min would leave just the drive and overstate profit/hr."""
+    if stop_mins is None or pd.isna(stop_mins) or stop_mins <= 0 or not p["span_hours"]:
+        return None
+    return (stop_mins * p["payroll_hours"] / p["span_hours"] + p["drive_mins"]) / 60
+
+
+def actual_pph(gross_profit, stop_mins, p):
+    """Where a stop lands on the green sheet: its real gross profit (freight
+    in) per cost hour."""
+    hours = cost_hours(stop_mins, p)
+    if hours is None or gross_profit is None or pd.isna(gross_profit):
+        return None
+    return gross_profit / hours
+
+
+def pph_band(pph, p):
+    """'below' breakeven, 'between' breakeven and target, 'target' or better."""
+    if pph is None or pd.isna(pph):
+        return None
+    return "below" if pph < p["breakeven_pph"] else "between" if pph < p["target_pph"] else "target"
+
+
+def stop_gross_profit(billing, iso_date):
+    """Gross profit per delivery SO on a date (a stop's billing lines summed —
+    fuel, DEF and fees). Empty when the day has no billing worksheet."""
+    day = billing[(billing["date"] == iso_date) & (billing["so"] != "")]
+    return day.groupby("so")["gross_profit"].sum(min_count=1)
 
 
 def pct_diff(val, avg):

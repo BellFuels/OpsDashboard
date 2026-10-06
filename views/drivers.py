@@ -8,12 +8,13 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from lib import calc, theme
-from lib.parsing import fmt_hmm
+from lib.parsing import fmt_hmm, is_third_party
 
 
 def render(data, _sel_date):
     latest = data.dates[-1]
-    all_hist_drivers = sorted(d for d in data.rolled_history["driver"].unique() if d)
+    all_hist_drivers = sorted(d for d in data.rolled_history["driver"].unique()
+                              if d and not is_third_party(d))
     d1, d2 = st.columns([2, 2])
     comp = d1.multiselect("Drivers", all_hist_drivers)
     d1.caption("Pick one driver to see them against everyone else at their stops, "
