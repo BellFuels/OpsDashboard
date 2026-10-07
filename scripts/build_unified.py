@@ -916,6 +916,32 @@ def heal_missing_types(deliveries):
     return healed
 
 
+# Stops that share one name but are really two operations: a construction-fleet
+# fueling site (many units, long stops) and a single-tank drop (1 unit, short).
+# Split the single-unit drops onto their own stop name + TANK type so each gets
+# its own average. Map: base stop name -> tank stop name.
+SPLIT_SINGLE_UNIT_STOPS = {
+    "PLOTE CONSTRUCTION, INC": "PLOTE CONSTRUCTION, INC - TANK",
+}
+
+
+def split_single_unit_sites(deliveries):
+    """Rename single-unit (Units<=1) deliveries at configured fleet sites to a
+    separate TANK stop so tank drops aren't averaged in with fleet fueling.
+    Idempotent: already-renamed rows carry the new name and are skipped."""
+    moved = 0
+    for r in deliveries:
+        tank_name = SPLIT_SINGLE_UNIT_STOPS.get(cell_str(r.get("Stop")))
+        if not tank_name:
+            continue
+        u = r.get("Units")
+        if isinstance(u, (int, float)) and u <= 1:
+            r["Stop"] = tank_name
+            r["FleetType"] = "TANK"
+            moved += 1
+    return moved
+
+
 def parse_payroll_pdf(path, name_map):
     """Port of v1 parsePayrollFile PDF branch, via pdfplumber word coordinates."""
     import pdfplumber
@@ -1519,6 +1545,12 @@ def main():
     if data["deliveries"]:
         print(f"  {have} of {len(data['deliveries'])} rows now carry a town "
               f"({100 * have / len(data['deliveries']):.0f}%)")
+
+    # ── split single-unit tank drops off shared fleet-site names ──
+    #    (runs after enrichment/town-fill so those use the real customer name)
+    moved = split_single_unit_sites(data["deliveries"])
+    if moved:
+        print(f"Split: moved {moved} single-unit row(s) to a separate TANK stop")
 
     # ── gross profit: Billing Worksheet + the same day's OPIS email ──
     if classified["opis"] and not classified["billing"]:
