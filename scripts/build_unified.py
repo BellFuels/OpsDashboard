@@ -1206,6 +1206,27 @@ def compute_billing(lines, opis, deliveries):
         gp = round(l["Sale"] - cost, 2) if cost is not None and l["Sale"] is not None else None
         out.append({**l, "SO": hit["SO"] if hit else "", "Match": how,
                     "UnitCost": unit, "CostSource": src, "Cost": cost, "GrossProfit": gp})
+    # Combined deliveries: the feed can fold two loads into one delivery row (DMK
+    # 10/5: 4,387.2 + 1,177.9 gal under 573204) while billing keeps two orders. A
+    # line still unmatched belongs to a delivery when it is exactly what that
+    # delivery has left after the lines billed to it by order — only when one fits.
+    delivered, billed = {}, {}
+    for d in deliveries:
+        if d["SO"]:
+            k = (d["Date"], d["SO"])
+            delivered[k] = delivered.get(k, 0.0) + (d["Gallons"] or 0)
+    for r in out:
+        if r["SO"]:
+            k = (r["Date"], r["SO"])
+            billed[k] = billed.get(k, 0.0) + r["Qty"]
+    for r in out:
+        if r["Match"] != "unmatched" or r["Qty"] <= 0:
+            continue
+        fits = [k for k, gal in delivered.items() if k[0] == r["Date"]
+                and abs(gal - billed.get(k, 0.0) - r["Qty"]) < 0.05 and billed.get(k, 0.0) > 0]
+        if len(fits) == 1:
+            r["SO"], r["Match"] = fits[0][1], "gallons"
+            billed[fits[0]] = billed.get(fits[0], 0.0) + r["Qty"]
     return out
 
 
