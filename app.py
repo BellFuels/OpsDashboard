@@ -134,10 +134,14 @@ with side.expander("Markup calculator (green sheet)"):
             ("span_hours", "Hours first stop to last", 0.5,
              "Hours from the start of the first stop to the end of the last."),
             ("drive_mins", "Average drive between stops (min)", 1.0, None),
+            ("min_pph", "Minimum profit per hour ($)", 10.0,
+             "Green sheet Min PPH. Stops below it are '1 - Below Minimum'."),
             ("breakeven_pph", "Breakeven profit per hour ($)", 10.0,
-             "Green sheet breakeven. Stops earning less per hour land red."),
+             "Green sheet breakeven: '2 - Meets Minimum' below it, '3 - Meets Breakeven' from it."),
             ("target_pph", "Target profit per hour ($)", 10.0,
-             "Green sheet: breakeven $330 + $100 = $430.")]:
+             "Green sheet: breakeven $330 + $100 = $430. '4 - Meets Target' from it."),
+            ("too_high_pph", "Too high profit per hour ($)", 10.0,
+             "Green sheet: target × 5 = $2,150. '5 - Too High' from it.")]:
         st.session_state.setdefault(f"markup_{k}", float(data.markup[k]))
         st.number_input(label, min_value=step, step=step, key=f"markup_{k}", help=hlp)
 side.caption("🔒 Data lives in this session's memory only. Closing the tab (or idling out) "
