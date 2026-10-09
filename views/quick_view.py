@@ -11,7 +11,7 @@ import streamlit as st
 from lib import calc, theme
 from lib.parsing import THIRD_PARTY_DRIVER, fmt_hhmmss, fmt_hmm, is_third_party
 from lib.timeline import build_timeline
-from views.common import day_label, iso_to_mdy, markup_params
+from views.common import day_label, green_sheet_rule, iso_to_mdy, markup_params
 
 
 def tank_svg(fill):
@@ -141,58 +141,97 @@ def glance_table(columns):
             f"<tbody>{body}</tbody></table></div>")
 
 
-def green_sheet_chart(day_rolled, stop_gp, p):
-    """One dot per Bell stop: stop minutes across, real profit per hour up (log
-    scale — fills run from ~$100 to $2,500+/hr), on red / amber / green bands
-    split at breakeven and target. Dot size follows gallons."""
-    rows = []
+def _rgba(hex_color, alpha):
+    h = hex_color.lstrip("#")
+    return f"rgba({int(h[0:2], 16)},{int(h[2:4], 16)},{int(h[4:6], 16)},{alpha})"
+
+
+def green_sheet_points(day_rolled, stop_gp, p):
+    """Each Bell stop on the day with billing: (row, gross profit, GP per
+    stop-time hour, green-sheet range). A contracted carrier's stops are left
+    out (no Bell truck time); stops with no stop time get no range."""
+    pts = []
     for r in day_rolled.itertuples():
         if is_third_party(r.driver):
-            continue  # a contracted carrier's stop uses no Bell truck time
-        gp = stop_gp.get(r.so)
-        pph = calc.actual_pph(gp, r.stop_mins, p)
-        rows.append((r, gp, pph, calc.pph_band(pph, p)))
-    placed = [x for x in rows if x[2] is not None and x[2] > 0]
-    counts = {b: sum(1 for x in rows if x[3] == b) for b in ("below", "between", "target")}
-    counts["none"] = sum(1 for x in rows if x[2] is None)
-    lo = min([x[2] for x in placed] + [p["breakeven_pph"]]) * 0.7
-    hi = max([x[2] for x in placed] + [p["target_pph"]]) * 1.4
-    fig = go.Figure()
-    for y0, y1, color in ((lo, p["breakeven_pph"], theme.RED), (p["breakeven_pph"], p["target_pph"], theme.ACCENT),
-                          (p["target_pph"], hi, theme.GREEN)):
-        fig.add_hrect(y0=y0, y1=y1, fillcolor=color, opacity=0.07, line_width=0, layer="below")
-    for y, label in ((p["breakeven_pph"], f"breakeven ${p['breakeven_pph']:,.0f}"),
-                     (p["target_pph"], f"target ${p['target_pph']:,.0f}")):
-        fig.add_hline(y=y, line=dict(color=theme.MUTED_2, width=1, dash="dot"))
-        # annotations on a log axis take log10 coordinates (shapes take data values)
-        fig.add_annotation(x=1, xref="paper", xanchor="left", y=math.log10(y), yanchor="middle",
-                           text=label, showarrow=False, font=dict(color=theme.MUTED, size=11))
-    color = {"below": theme.RED, "between": theme.ACCENT, "target": theme.GREEN}
-    for band, name in (("target", "At or above target"), ("between", "Breakeven to target"),
-                       ("below", "Below breakeven")):
-        pts = [x for x in placed if x[3] == band]
-        if not pts:
             continue
+        gp = stop_gp.get(r.so)
+        band = calc.pph_band(calc.actual_pph(gp, r.stop_mins, p), p)
+        pts.append((r, gp, calc.gp_per_stop_hour(gp, r.stop_mins), band))
+    return pts
+
+
+def green_sheet_chart(pts, p):
+    """Recreates the 'Stops by Gross Profit per Hour and Minutes Onsite' report:
+    minutes onsite across, gross profit per stop-time hour up (log scale), one
+    dot per stop coloured by its green-sheet range. Behind the dots, the green
+    sheet's own benchmark curves — each rate's 'PPH onsite', which climbs for
+    short stops — shade the five ranges."""
+    placed = [x for x in pts if x[2] is not None and x[2] > 0 and x[3]]
+    xmax = max([x[0].stop_mins for x in placed] + [60]) * 1.05
+    lo = min([x[2] for x in placed] + [p["min_pph"]]) * 0.6
+    hi = max([x[2] for x in placed] + [p["too_high_pph"]]) * 1.5
+    grid = [m / 2 for m in range(2, int(xmax * 2) + 2)]
+    fig = go.Figure()
+    # shaded ranges: floor, then each benchmark curve filled down to the one before
+    fig.add_trace(go.Scatter(x=grid, y=[lo] * len(grid), mode="lines", line=dict(width=0),
+                             hoverinfo="skip", showlegend=False))
+    rates = [rate for _, _, rate in calc.GREEN_SHEET_BANDS[1:]]
+    for (key, _, _), rate in zip(calc.GREEN_SHEET_BANDS, rates + [None]):
+        ys = ([min(hi, calc.pph_onsite_threshold(p[rate], m, p)) for m in grid] if rate
+              else [hi] * len(grid))
         fig.add_trace(go.Scatter(
-            x=[x[0].stop_mins for x in pts], y=[x[2] for x in pts], mode="markers", name=name,
-            marker=dict(color=color[band], size=[max(7, min(26, 6 + (x[0].gallons or 0) ** 0.5 / 2)) for x in pts],
-                        line=dict(color=theme.BG, width=1), opacity=0.9),
-            customdata=[[x[0].stop, x[0].driver.title(), x[0].gallons, x[1], x[1] / x[0].gallons
-                         if x[0].gallons else 0, calc.min_markup(x[0].gallons, x[0].stop_mins, p) or 0]
-                        for x in pts],
+            x=grid, y=ys, mode="lines", fill="tonexty", fillcolor=_rgba(theme.BAND_COLOR[key], 0.07),
+            line=dict(color=theme.MUTED_2, width=1, dash="dot") if rate else dict(width=0),
+            hoverinfo="skip", showlegend=False))
+    for key, label, _ in calc.GREEN_SHEET_BANDS:
+        sel = [x for x in placed if x[3] == key]
+        fig.add_trace(go.Scatter(
+            x=[x[0].stop_mins for x in sel] or [None], y=[x[2] for x in sel] or [None],
+            mode="markers", name=label,
+            marker=dict(color=theme.BAND_COLOR[key], size=11, opacity=0.9,
+                        line=dict(color=theme.BG, width=1)),
+            customdata=[[x[0].stop, x[0].driver.title(), x[0].gallons, x[1],
+                         x[1] / x[0].gallons if x[0].gallons else 0,
+                         calc.pph_onsite_threshold(p["breakeven_pph"], x[0].stop_mins, p),
+                         calc.pph_onsite_threshold(p["target_pph"], x[0].stop_mins, p)] for x in sel],
             hovertemplate=("<b>%{customdata[0]}</b><br>%{customdata[1]}<br>"
-                           "%{customdata[2]:,.1f} gal · %{x:.0f} min<br>"
-                           "gross profit $%{customdata[3]:,.2f} · $%{customdata[4]:.3f}/gal "
-                           "(min $%{customdata[5]:.3f})<br><b>$%{y:,.0f} per hour</b><extra></extra>")))
-    ticks = [t for t in (50, 100, 200, 500, 1000, 2000, 5000, 10000) if lo <= t <= hi]
+                           "%{customdata[2]:,.1f} gal · %{x:.0f} min onsite<br>"
+                           "gross profit $%{customdata[3]:,.2f} · $%{customdata[4]:.3f}/gal<br>"
+                           f"<b>$%{{y:,.2f}} per stop-time hour</b> · {label}<br>"
+                           "breakeven $%{customdata[5]:,.0f} · target $%{customdata[6]:,.0f} "
+                           "per hour at this length<extra></extra>")))
+    ticks = [t for t in (50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000) if lo <= t <= hi]
     fig.update_layout(theme.chart_layout(
-        height=380, margin=dict(l=10, r=100, t=10, b=10),  # right margin holds the line labels
-        xaxis=dict(title="stop minutes", gridcolor=theme.BORDER_SOFT, rangemode="tozero"),
-        yaxis=dict(title="profit per hour", type="log", range=[math.log10(lo), math.log10(hi)],
-                   tickvals=ticks, ticktext=[f"${t:,.0f}" for t in ticks], gridcolor=theme.BORDER_SOFT),
-        legend=dict(orientation="h", y=1.02, yanchor="bottom", x=1, xanchor="right"),
+        height=420, margin=dict(l=10, r=10, t=10, b=10),
+        xaxis=dict(title="minutes onsite", range=[0, xmax], gridcolor=theme.BORDER_SOFT),
+        yaxis=dict(title="gross profit per stop-time hour", type="log",
+                   range=[math.log10(lo), math.log10(hi)], tickvals=ticks,
+                   ticktext=[f"${t:,.0f}" for t in ticks], gridcolor=theme.BORDER_SOFT),
+        # stacked fills make Plotly reverse the legend; keep it 1 → 5 like the report
+        legend=dict(orientation="h", y=1.02, yanchor="bottom", x=0, xanchor="left", title_text="Target",
+                    traceorder="normal"),
         hoverlabel=dict(bgcolor=theme.CARD_BG_2, bordercolor=theme.BORDER, font=dict(color=theme.INK))))
-    return fig, counts
+    return fig
+
+
+def target_donut(pts):
+    """'Stops by Target Range': how many stops landed in each green-sheet range."""
+    keys = [k for k, _, _ in calc.GREEN_SHEET_BANDS]
+    counts = [sum(1 for x in pts if x[3] == k) for k in keys]
+    total = sum(counts)
+    fig = go.Figure(go.Pie(
+        labels=[calc.BAND_LABEL[k] for k in keys], values=counts, hole=0.62, sort=False,
+        direction="clockwise", marker=dict(colors=[theme.BAND_COLOR[k] for k in keys],
+                                           line=dict(color=theme.CARD_BG, width=2)),
+        textinfo="value", textfont=dict(color=theme.BG, size=12),
+        hovertemplate="%{label}<br>%{value} stop(s) · %{percent}<extra></extra>"))
+    fig.update_layout(theme.chart_layout(
+        height=420, margin=dict(l=10, r=10, t=10, b=10), showlegend=False,
+        annotations=[dict(text="Stops total", x=0.5, y=0.58, xref="paper", yref="paper", showarrow=False,
+                          font=dict(color=theme.MUTED, size=13)),
+                     dict(text=f"<b>{total}</b>", x=0.5, y=0.45, xref="paper", yref="paper", showarrow=False,
+                          font=dict(color=theme.INK, size=30))]))
+    return fig
 
 
 def render(data, qd):
@@ -260,18 +299,20 @@ def render(data, qd):
     stop_gp = calc.stop_gross_profit(data.billing, qd)
     if len(stop_gp):
         mk = markup_params(data)
-        st.markdown("##### Green sheet — profit per hour by stop")
+        st.markdown("##### Green sheet — stops by gross profit per hour and minutes onsite")
         with st.container(border=True):
-            fig, counts = green_sheet_chart(day_rolled, stop_gp, mk)
-            st.plotly_chart(fig, width="stretch", config={"displayModeBar": False})
+            pts = green_sheet_points(day_rolled, stop_gp, mk)
+            c1, c2 = st.columns([1, 2.6])
+            c1.markdown("**Stops by Target Range**")
+            c1.plotly_chart(target_donut(pts), width="stretch", config={"displayModeBar": False})
+            c2.plotly_chart(green_sheet_chart(pts, mk), width="stretch", config={"displayModeBar": False})
+            no_time = sum(1 for x in pts if not x[3])
+            # \\$ so Streamlit's markdown doesn't read $…$ as LaTeX
             st.caption(
-                # \\$ so Streamlit's markdown doesn't read $…$ as LaTeX
-                f"{counts['target']} at or above the \\${mk['target_pph']:,.0f}/hr target · "
-                f"{counts['between']} between breakeven and target · "
-                f"{counts['below']} below the \\${mk['breakeven_pph']:,.0f}/hr breakeven"
-                + (f" · {counts['none']} without a stop time (not placed)" if counts["none"] else "")
-                + ". Profit per hour = the stop's real gross profit ÷ the green sheet's cost hours; "
-                  "inputs in the sidebar's markup calculator.")
+                "Each stop's gross profit per stop-time hour against THE GREEN SHEET's ranges. "
+                + green_sheet_rule(mk).replace("$", "\\$")
+                + (f" {no_time} stop(s) without a stop time aren't placed." if no_time else "")
+                + " Rates are in the sidebar's markup calculator.")
 
     # ── shift timeline ──
     st.markdown("##### Shift timeline")

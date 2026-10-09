@@ -40,22 +40,33 @@ def markup_column_config(p, basis):
 
 
 ACTUAL_MK_COL = "Actual $/gal"
-PPH_COL = "Actual PPH"
+STOP_HR_COL = "GP per Stop Hr"
+TARGET_COL = "Target"
+
+
+def green_sheet_rule(p):
+    """One-line statement of THE GREEN SHEET's test, with the live inputs."""
+    return (f"Each range's rate (min ${p['min_pph']:,.0f}, breakeven ${p['breakeven_pph']:,.0f}, "
+            f"target ${p['target_pph']:,.0f}, too high ${p['too_high_pph']:,.0f}) × the stop's cost "
+            f"hours (stop min × {p['payroll_hours']:g} ÷ {p['span_hours']:g} + {p['drive_mins']:g} "
+            "drive min) is the gross profit it needs; per stop-time hour that is the range's "
+            "'PPH onsite', higher for short stops.")
 
 
 def pph_column_config(p):
     """Header tooltips for where a stop lands on the green sheet."""
     import streamlit as st
-    bands = (f"Red below ${p['breakeven_pph']:,.0f}/hr breakeven, amber up to the "
-             f"${p['target_pph']:,.0f}/hr target, green at or above it.")
     return {
         ACTUAL_MK_COL: st.column_config.Column(help=(
             "This stop's real gross profit per gallon (sale excl taxes, freight in, minus OPIS "
-            f"cost; DEF and fees included). Compare with Min Markup $/gal. {bands}")),
-        PPH_COL: st.column_config.Column(help=(
-            "Where the stop lands on the green sheet: its real gross profit ÷ the green sheet's "
-            f"cost hours (stop min × {p['payroll_hours']:g} ÷ {p['span_hours']:g} + "
-            f"{p['drive_mins']:g} drive min, ÷ 60). {bands} — when there's no stop time.")),
+            "cost; DEF and fees included). Compare with Min Markup $/gal. Coloured by Target.")),
+        STOP_HR_COL: st.column_config.Column(help=(
+            "Gross profit per hour of stop time: gross profit ÷ (stop min ÷ 60) — the sales "
+            "reports' \"Gross Profit per Stop Time Hour\" and the green sheet Calculator's. "
+            "Coloured by Target. Shows — when there's no stop time.")),
+        TARGET_COL: st.column_config.Column(help=(
+            "THE GREEN SHEET's target range: 1 Below Minimum, 2 Meets Minimum, 3 Meets "
+            f"Breakeven, 4 Meets Target, 5 Too High. {green_sheet_rule(p)}")),
     }
 
 

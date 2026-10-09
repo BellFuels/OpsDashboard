@@ -94,11 +94,48 @@ def actual_pph(gross_profit, stop_mins, p):
     return gross_profit / hours
 
 
+def gp_per_stop_hour(gross_profit, stop_mins):
+    """Gross profit per hour of the stop's own time — gross profit ÷ (stop min ÷ 60),
+    as the sales reports figure it. No green-sheet allowances, so it runs well
+    above Actual PPH and isn't banded against breakeven/target."""
+    if (stop_mins is None or pd.isna(stop_mins) or stop_mins <= 0
+            or gross_profit is None or pd.isna(gross_profit)):
+        return None
+    return gross_profit / (stop_mins / 60)
+
+
+# THE GREEN SHEET's five target ranges, lowest first: (key, label, rate in `p`
+# that starts the range). A stop is in the highest range whose rate it reaches.
+GREEN_SHEET_BANDS = [
+    ("below_min", "1 - Below Minimum", None),
+    ("min", "2 - Meets Minimum", "min_pph"),
+    ("breakeven", "3 - Meets Breakeven", "breakeven_pph"),
+    ("target", "4 - Meets Target", "target_pph"),
+    ("too_high", "5 - Too High", "too_high_pph"),
+]
+BAND_LABEL = {k: label for k, label, _ in GREEN_SHEET_BANDS}
+
+
 def pph_band(pph, p):
-    """'below' breakeven, 'between' breakeven and target, 'target' or better."""
+    """The green sheet's target range for a stop's profit per cost hour (from
+    actual_pph). Same answer as the sheet's own test — gross profit per
+    stop-time hour against its 'PPH onsite' thresholds — since both sides are
+    scaled by the same stop minutes."""
     if pph is None or pd.isna(pph):
         return None
-    return "below" if pph < p["breakeven_pph"] else "between" if pph < p["target_pph"] else "target"
+    band = GREEN_SHEET_BANDS[0][0]
+    for key, _, rate in GREEN_SHEET_BANDS[1:]:
+        if pph >= p[rate]:
+            band = key
+    return band
+
+
+def pph_onsite_threshold(rate, stop_mins, p):
+    """A green-sheet rate as 'PPH onsite' for a stop of this length: the rate
+    times the stop's cost hours, per hour of stop time — what gross profit per
+    stop-time hour must reach to make that range."""
+    hours = cost_hours(stop_mins, p)
+    return rate * hours / (stop_mins / 60) if hours is not None else None
 
 
 def stop_gross_profit(billing, iso_date):

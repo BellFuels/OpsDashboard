@@ -48,6 +48,13 @@ RED_BG = "background-color: rgba(232,86,64,0.20)"
 YELLOW_BG = "background-color: rgba(242,167,60,0.18)"
 ORANGE_BG = "background-color: rgba(230,100,20,0.15)"
 GREEN_FG = f"color: {GREEN}"
+# THE GREEN SHEET's five target ranges (Quick View chart + Daily Route Performance)
+LIME = "#C9D63A"             # meets breakeven
+PURPLE = "#A07BE0"           # too high
+BAND_COLOR = {"below_min": RED, "min": ACCENT, "breakeven": LIME, "target": GREEN, "too_high": PURPLE}
+BAND_STYLE = {"below_min": RED_BG, "min": ORANGE_BG,
+              "breakeven": "background-color: rgba(201,214,58,0.18)",
+              "target": GREEN_FG, "too_high": f"color: {PURPLE}"}
 
 # ── type ──
 DISPLAY = "'Saira Semi Condensed', system-ui, sans-serif"

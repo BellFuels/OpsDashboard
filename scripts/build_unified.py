@@ -1684,10 +1684,11 @@ def main():
     data["meta"]["window_days"] = str(window_days)
     data["meta"].setdefault("driver_order", ",".join(DRIVER_SENIORITY))
     # THE GREEN SHEET's variables behind the Min Markup $/gal column; editable in
-    # the Meta sheet like the benchmarks. Target PPH = breakeven $330 + $100;
-    # the dashboard bands each stop's real profit/hr against both.
+    # the Meta sheet like the benchmarks. Min $150, breakeven $330, target =
+    # breakeven + $100, too high = target x 5: the dashboard's five target ranges.
     for k, v in (("payroll_hours", "8"), ("span_hours", "6"), ("drive_mins", "20"),
-                 ("breakeven_pph", "330"), ("target_pph", "430")):
+                 ("min_pph", "150"), ("breakeven_pph", "330"), ("target_pph", "430"),
+                 ("too_high_pph", "2150")):
         data["meta"].setdefault(f"markup.{k}", v)
 
     # ── cross-checks: drivers vs payroll ──

@@ -33,8 +33,11 @@ def is_third_party(driver):
     return str(driver or "") == THIRD_PARTY_DRIVER
 
 
+# THE GREEN SHEET's variables: min $150, breakeven $330, target = breakeven + $100,
+# too high = target x 5
 MARKUP_DEFAULTS = {"payroll_hours": 8.0, "span_hours": 6.0, "drive_mins": 20.0,
-                   "breakeven_pph": 330.0, "target_pph": 430.0}
+                   "min_pph": 150.0, "breakeven_pph": 330.0, "target_pph": 430.0,
+                   "too_high_pph": 2150.0}
 
 DELIVERY_COLUMNS = ["Date", "Driver", "Stop", "SO", "Product", "Gallons", "StopMins",
                     "Units", "Address", "FleetType", "CustType", "GPM",
