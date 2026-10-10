@@ -18,7 +18,7 @@ import streamlit as st
 
 from lib import theme
 from lib.parsing import ALL_SERVICE_TYPES, UnifiedData, UnifiedFileError, fmt_hhmmss, load_unified
-from views import daily, drivers, payroll, quick_view, stops
+from views import daily, drivers, payroll, quick_view, route_sheets, stops
 from views.common import day_label, iso_to_mdy, nearest_date
 
 VIEWS = {
@@ -27,7 +27,10 @@ VIEWS = {
     "Stop Averages": stops,
     "Drivers": drivers,
     "Payroll & HOS": payroll,
+    "Route Sheets": route_sheets,
 }
+# views that work before a unified file is loaded (render gets data=None)
+NO_FILE_VIEWS = {"Route Sheets"}
 
 st.set_page_config(page_title="EBDB — Everyday Bell Dashboard", page_icon="◆", layout="wide")
 st.markdown(theme.CSS, unsafe_allow_html=True)
@@ -74,76 +77,72 @@ elif "data" not in st.session_state:
         st.session_state.data = load_unified(open(_dev, "rb").read())
 
 data = st.session_state.get("data")
-if data is None:
-    st.markdown("<div class='view-title'>EBDB</div>", unsafe_allow_html=True)
-    st.info("**Drop the unified file from the daily email into the box in the left sidebar** "
-            "(Bell_Unified_….xlsx). Nothing is stored — you upload it each visit.")
-    st.stop()
-
-dates = data.dates
-first, last = date.fromisoformat(dates[0]), date.fromisoformat(dates[-1])
-# The one date every view follows. Kept in session state so the arrows can step
-# it; clamped to the file's range so a stale pick from an older file can't land
-# outside the picker's bounds.
-cur = st.session_state.get("sel_date")
-if not isinstance(cur, date) or not first <= cur <= last:
-    st.session_state.sel_date = last
+sel_date = None  # no unified file: only Route Sheets has something to show
+if data is not None:
+    dates = data.dates
+    first, last = date.fromisoformat(dates[0]), date.fromisoformat(dates[-1])
+    # The one date every view follows. Kept in session state so the arrows can step
+    # it; clamped to the file's range so a stale pick from an older file can't land
+    # outside the picker's bounds.
+    cur = st.session_state.get("sel_date")
+    if not isinstance(cur, date) or not first <= cur <= last:
+        st.session_state.sel_date = last
 
 
-def step_date(delta):
-    """Move to the previous/next date that actually has route data."""
-    i = dates.index(nearest_date(st.session_state.sel_date.isoformat(), dates)) + delta
-    st.session_state.sel_date = date.fromisoformat(dates[max(0, min(len(dates) - 1, i))])
+    def step_date(delta):
+        """Move to the previous/next date that actually has route data."""
+        i = dates.index(nearest_date(st.session_state.sel_date.isoformat(), dates)) + delta
+        st.session_state.sel_date = date.fromisoformat(dates[max(0, min(len(dates) - 1, i))])
 
 
-# Not a selectbox: with ~170 options Streamlit leaves the current value in the
-# input unselected, so typing appends to it and filters the list to nothing.
-picked = side.date_input("Date", key="sel_date", min_value=first, max_value=last,
-                         format="MM/DD/YYYY").isoformat()
-a1, a2 = side.columns(2)
-a1.button("‹ Prev day", on_click=step_date, args=(-1,), width="stretch")
-a2.button("Next day ›", on_click=step_date, args=(1,), width="stretch")
-sel_date = nearest_date(picked, dates)
-if sel_date != picked:
-    side.caption(f"No route data for {iso_to_mdy(picked)} — showing {iso_to_mdy(sel_date)}.")
+    # Not a selectbox: with ~170 options Streamlit leaves the current value in the
+    # input unselected, so typing appends to it and filters the list to nothing.
+    picked = side.date_input("Date", key="sel_date", min_value=first, max_value=last,
+                             format="MM/DD/YYYY").isoformat()
+    a1, a2 = side.columns(2)
+    a1.button("‹ Prev day", on_click=step_date, args=(-1,), width="stretch")
+    a2.button("Next day ›", on_click=step_date, args=(1,), width="stretch")
+    sel_date = nearest_date(picked, dates)
+    if sel_date != picked:
+        side.caption(f"No route data for {iso_to_mdy(picked)} — showing {iso_to_mdy(sel_date)}.")
 
-with side.expander("About this file"):
-    meta = data.meta
-    st.markdown(
-        f"**Built:** {meta.get('build_date', '—')}  \n"
-        f"**Data through:** {iso_to_mdy(dates[-1])} · {len(dates)} days · {len(data.rolled_history):,} stops  \n"
-        f"**Shift split:** {data.shift_split_time}  \n"
-        f"**Post-trip allowance (DVIR):** {data.dvir_mins} min  \n"
-        f"**Window:** {meta.get('window_days', '180')} days  \n"
-        f"**Customers:** {len(data.customers):,}  \n"
-        f"**Schema:** v{meta.get('schema_version', '?')}")
-    if data.product_map:
-        st.markdown("**Products:** " + " · ".join(f"`{k}` → {v}" for k, v in data.product_map.items()))
-    if data.benchmarks:
-        st.markdown("**Min/Unit benchmarks:** " + " · ".join(
-            f"`{ft}` → {fmt_hhmmss(data.benchmarks[ft])}" for ft in ALL_SERVICE_TYPES if ft in data.benchmarks))
-    st.caption("These travel inside the file (Meta sheet). To change one, edit the Meta sheet "
-               "in Excel before emailing — it propagates to everyone.")
-with side.expander("Markup calculator (green sheet)"):
-    st.caption("Drives the **Min Markup $/gal** column on Daily Route Performance and Stop "
-               "Averages, and where each stop lands (Actual PPH and the Quick View green-sheet "
-               "chart). Starts from the file's Meta sheet (`markup.*` keys); changes here "
-               "last this session only.")
-    for k, label, step, hlp in [
-            ("payroll_hours", "Payroll hours", 0.5, "Paid hours in a driver's day."),
-            ("span_hours", "Hours first stop to last", 0.5,
-             "Hours from the start of the first stop to the end of the last."),
-            ("drive_mins", "Average drive between stops (min)", 1.0, None),
-            ("min_pph", "Minimum profit per hour ($)", 10.0,
-             "Green sheet Min PPH. Stops below it are '1 - Below Minimum'."),
-            ("breakeven_pph", "Breakeven profit per hour ($)", 10.0,
-             "Green sheet breakeven: '2 - Meets Minimum' below it, '3 - Meets Breakeven' from it."),
-            ("target_pph", "Target profit per hour ($)", 10.0,
-             "Green sheet: breakeven $330 + $100 = $430. '4 - Meets Target' from it."),
-            ("too_high_pph", "Too high profit per hour ($)", 10.0,
-             "Green sheet: target × 5 = $2,150. '5 - Too High' from it.")]:
-        st.session_state.setdefault(f"markup_{k}", float(data.markup[k]))
-        st.number_input(label, min_value=step, step=step, key=f"markup_{k}", help=hlp)
+    with side.expander("About this file"):
+        meta = data.meta
+        st.markdown(
+            f"**Built:** {meta.get('build_date', '—')}  \n"
+            f"**Data through:** {iso_to_mdy(dates[-1])} · {len(dates)} days · {len(data.rolled_history):,} stops  \n"
+            f"**Shift split:** {data.shift_split_time}  \n"
+            f"**Post-trip allowance (DVIR):** {data.dvir_mins} min  \n"
+            f"**Window:** {meta.get('window_days', '180')} days  \n"
+            f"**Customers:** {len(data.customers):,}  \n"
+            f"**Schema:** v{meta.get('schema_version', '?')}")
+        if data.product_map:
+            st.markdown("**Products:** " + " · ".join(f"`{k}` → {v}" for k, v in data.product_map.items()))
+        if data.benchmarks:
+            st.markdown("**Min/Unit benchmarks:** " + " · ".join(
+                f"`{ft}` → {fmt_hhmmss(data.benchmarks[ft])}" for ft in ALL_SERVICE_TYPES if ft in data.benchmarks))
+        st.caption("These travel inside the file (Meta sheet). To change one, edit the Meta sheet "
+                   "in Excel before emailing — it propagates to everyone.")
+    with side.expander("Markup calculator (green sheet)"):
+        st.caption("Drives the **Min Markup $/gal** column on Daily Route Performance and Stop "
+                   "Averages, and each stop's target range (the Target column and the Quick View "
+                   "green-sheet chart). Starts from the file's Meta sheet (`markup.*` keys); changes here "
+                   "last this session only.")
+        for k, label, step, hlp in [
+                ("payroll_hours", "Payroll hours", 0.5, "Paid hours in a driver's day."),
+                ("span_hours", "Hours first stop to last", 0.5,
+                 "Hours from the start of the first stop to the end of the last."),
+                ("drive_mins", "Average drive between stops (min)", 1.0, None),
+                ("min_pph", "Minimum profit per hour ($)", 10.0,
+                 "Green sheet Min PPH. Stops below it are '1 - Below Minimum'."),
+                ("breakeven_pph", "Breakeven profit per hour ($)", 10.0,
+                 "Green sheet breakeven: '2 - Meets Minimum' below it, '3 - Meets Breakeven' from it."),
+                ("target_pph", "Target profit per hour ($)", 10.0,
+                 "Green sheet: breakeven $330 + $100 = $430. '4 - Meets Target' from it."),
+                ("too_high_pph", "Too high profit per hour ($)", 10.0,
+                 "Green sheet: target × 5 = $2,150. '5 - Too High' from it.")]:
+            st.session_state.setdefault(f"markup_{k}", float(data.markup[k]))
+            st.number_input(label, min_value=step, step=step, key=f"markup_{k}", help=hlp)
 side.caption("🔒 Data lives in this session's memory only. Closing the tab (or idling out) "
              "clears it. Nothing is written to the server's disk.")
 
@@ -153,6 +152,11 @@ side.caption("🔒 Data lives in this session's memory only. Closing the tab (or
 h1, h2 = st.columns([1.6, 2.4])  # room for "Daily Route Performance" on one line
 view = h2.segmented_control("View", list(VIEWS), default="Quick View", key="view",
                             label_visibility="collapsed") or "Quick View"
-h1.markdown(f"<div class='view-title'>{view}<small>{day_label(sel_date)}</small></div>",
+h1.markdown(f"<div class='view-title'>{view}<small>{day_label(sel_date) if sel_date else ''}</small></div>",
             unsafe_allow_html=True)
+if data is None and view not in NO_FILE_VIEWS:
+    st.info("**Drop the unified file from the daily email into the box in the left sidebar** "
+            "(Bell_Unified_….xlsx). Nothing is stored — you upload it each visit. "
+            "Route Sheets works without it.")
+    st.stop()
 VIEWS[view].render(data, sel_date)

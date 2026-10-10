@@ -3,9 +3,15 @@
 The Bell Fuels operations dashboard. Users upload the daily unified workbook
 (`Bell_Unified_<date>.xlsx`, produced by `scripts/build_unified.py` and
 emailed each day) and get five views: Quick View (Performance Snapshot: gallons vs goal and gross profit; at-a-glance
-table, shift timeline), Daily Route Performance, Stop Averages, Drivers, and a
-read-only Payroll & HOS grid. One date, picked in the sidebar, drives every
+table, shift timeline), Daily Route Performance, Stop Averages, Drivers, a
+read-only Payroll & HOS grid, and Route Sheets. One date, picked in the sidebar, drives every
 view; the file's settings sit under "About this file" in the sidebar.
+
+**Route Sheets** (moved in from `BellFuels/bellfuels-routesheets`, code in
+`lib/routesheets/`) works without the unified file: upload the day's dispatch
+planner PDF, enter each unit's driver, download printable sheets. With the
+unified file loaded, each stop also shows its 180-day averages from the file
+(no separate Customer_Metrics.xlsx). The dispatch PDF is read in memory only.
 
 **This repo contains code only. No delivery, customer, or payroll data may
 ever be committed** — see Security below.
