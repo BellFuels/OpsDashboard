@@ -77,9 +77,14 @@ DOWNTIME_RE = re.compile(r"\bdown\s?time\b", re.I)
 # Order is billing's order number; SO is the delivery it matched (Match: "order",
 # "gallons" = fallback on date + gallons, or "unmatched"). Sale is Total Sale
 # Excluding Taxes with freight left in; Cost = Qty x UnitCost from the day's OPIS.
+# Freight (header + item) and SheetMarkup ((Unit Price - Product Cost) x Qty, the
+# gross-profit sheet's own markup, D2 adder included) feed the green-sheet
+# tooltip's markup / freight-needed lines; new columns go last so older files
+# still read by position.
 BILLING_COLUMNS = ["Date", "Order", "SO", "Match", "Account", "Driver", "Product",
-                   "Qty", "Sale", "UnitCost", "CostSource", "Cost", "GrossProfit"]
-BILLING_FLOAT_COLUMNS = ("Qty", "Sale", "UnitCost", "Cost", "GrossProfit")
+                   "Qty", "Sale", "UnitCost", "CostSource", "Cost", "GrossProfit",
+                   "Freight", "SheetMarkup"]
+BILLING_FLOAT_COLUMNS = ("Qty", "Sale", "UnitCost", "Cost", "GrossProfit", "Freight", "SheetMarkup")
 
 
 TERMINAL_NOTE_RE = re.compile(r"\bterminal\b", re.I)
@@ -1150,14 +1155,22 @@ def parse_billing(path):
     c_acct, c_name, c_order = col("Account #"), col("Account Name"), col("Order #")
     c_prod, c_qty, c_sale = col("Product/Container"), col("Gross Qty"), col("Total Sale Excluding Taxes")
     c_drv, c_ship = col("Driver"), col("Shipment Date")
+    c_price, c_pcost = col("Unit Price"), col("Product Cost")
+    c_hfrt, c_ifrt = col("Header Freight"), col("Item Freight")
     lines = []
     for r in rows[hi + 1:]:
         if not r or not cell_str(r[c_acct]):
             continue
+        qty = parse_float(r[c_qty]) or 0.0
+        price, pcost = parse_float(r[c_price]), parse_float(r[c_pcost])
         lines.append({"Date": extract_date_iso(r[c_ship]), "Order": cell_str(r[c_order]),
                       "Account": cell_str(r[c_name]), "Driver": cell_str(r[c_drv]),
-                      "Product": cell_str(r[c_prod]).split("/")[0], "Qty": parse_float(r[c_qty]) or 0.0,
-                      "Sale": parse_float(r[c_sale])})
+                      "Product": cell_str(r[c_prod]).split("/")[0], "Qty": qty,
+                      "Sale": parse_float(r[c_sale]),
+                      "Freight": round((parse_float(r[c_hfrt]) or 0.0) + (parse_float(r[c_ifrt]) or 0.0), 2),
+                      # a no-fuel fee line (qty 0) carries no per-gallon markup
+                      "SheetMarkup": round((price - pcost) * qty, 2)
+                      if qty and price is not None and pcost is not None else 0.0})
     if lines and all(l["Sale"] is None for l in lines):
         raise ValueError(f"{BILLING_SHEET}: no Total Sale values — open and save the workbook in Excel so its formulas calculate")
     # PREVIOUS DAY PRICING: CODE (col J) -> CONTRACT COST (col K)

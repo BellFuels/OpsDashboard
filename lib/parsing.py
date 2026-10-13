@@ -496,9 +496,12 @@ def load_unified(file_bytes: bytes) -> UnifiedData:
                           "match": cell_str(col(3)), "account": cell_str(col(4)),
                           "product": cell_str(col(6)), "qty": parse_float(col(7)) or 0.0,
                           "sale": parse_float(col(8)), "cost": parse_float(col(11)),
-                          "gross_profit": parse_float(col(12))})
+                          "gross_profit": parse_float(col(12)),
+                          # from the gross-profit sheet; blank in files built before
+                          "freight": parse_float(col(13)), "sheet_markup": parse_float(col(14))})
         billing = pd.DataFrame(brows, columns=["date", "order", "so", "match", "account", "product",
-                                               "qty", "sale", "cost", "gross_profit"])
+                                               "qty", "sale", "cost", "gross_profit",
+                                               "freight", "sheet_markup"])
 
         payroll = pd.DataFrame(prows, columns=["date", "driver", "hours", "clock_in",
                                                "clock_out", "back_to_yard",

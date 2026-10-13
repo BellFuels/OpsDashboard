@@ -145,6 +145,38 @@ def stop_gross_profit(billing, iso_date):
     return day.groupby("so")["gross_profit"].sum(min_count=1)
 
 
+def stop_markup_freight(billing, iso_date):
+    """Per delivery SO on a date: (markup $/gal, freight $) from the billing
+    worksheet's gross-profit sheet — markup is (unit price − product cost) over
+    the stop's gallons. Stops whose lines lack those figures (files built before
+    they were saved) are left out."""
+    day = billing[(billing["date"] == iso_date) & (billing["so"] != "")]
+    day = day[day["freight"].notna() & day["sheet_markup"].notna()]
+    out = {}
+    for so, g in day.groupby("so"):
+        qty = g["qty"].sum()
+        if qty > 0:
+            out[so] = (g["sheet_markup"].sum() / qty, float(g["freight"].sum()))
+    return out
+
+
+def to_target(gross_profit, gallons, stop_mins, p, markup_freight):
+    """What a below-target stop needs to reach the green sheet's target: the
+    target per stop-time hour, the gross profit that is, the shortfall, and —
+    given (markup $/gal, freight $) from the gross-profit sheet — the markup per
+    gallon needed with freight as is, and the freight needed with markup as is."""
+    hours = cost_hours(stop_mins, p)
+    if hours is None or gross_profit is None or pd.isna(gross_profit) or not gallons:
+        return None
+    need = p["target_pph"] * hours
+    out = {"target_hr": need / (stop_mins / 60), "target_gp": need, "short": need - gross_profit}
+    if markup_freight is not None:
+        markup, freight = markup_freight
+        out.update(markup=markup, freight=freight, markup_need=(need - freight) / gallons,
+                   freight_need=need - markup * gallons)
+    return out
+
+
 def pct_diff(val, avg):
     if avg is None or pd.isna(avg) or avg == 0 or val is None or pd.isna(val):
         return None

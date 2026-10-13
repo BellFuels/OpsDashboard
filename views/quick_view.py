@@ -160,7 +160,30 @@ def green_sheet_points(day_rolled, stop_gp, p):
     return pts
 
 
-def green_sheet_chart(pts, p):
+# ranges that need no "to target" lines on hover
+AT_TARGET = {"target", "too_high"}
+
+
+def to_target_html(pt, p, markup_freight):
+    """Extra hover lines for a stop below the green sheet's target: the target
+    point, then the markup per gallon needed (freight as is) and the freight
+    needed (markup as is), from the gross-profit sheet's markup and freight."""
+    r, gp = pt[0], pt[1]
+    t = calc.to_target(gp, r.gallons, r.stop_mins, p, markup_freight)
+    if t is None:
+        return ""
+    html = (f"<br>────────<br><b>Target: ${t['target_hr']:,.2f} per stop-time hour</b>"
+            f" = ${t['target_gp']:,.2f} gross profit, ${t['short']:,.2f} short")
+    if "markup" not in t:
+        return html + "<br><i>markup and freight not in this file — re-drop the day's billing worksheet</i>"
+    return html + (
+        f"<br>Markup ${t['markup']:.3f}/gal → needs <b>${t['markup_need']:.3f}/gal</b>"
+        f" (+${t['markup_need'] - t['markup']:.3f}, freight as is)"
+        f"<br>Freight ${t['freight']:,.2f} → needs <b>${t['freight_need']:,.2f}</b> (markup as is)"
+        "<br><i>markup from the billing worksheet's gross-profit sheet</i>")
+
+
+def green_sheet_chart(pts, p, markup_freight):
     """Recreates the 'Stops by Gross Profit per Hour and Minutes Onsite' report:
     minutes onsite across, gross profit per stop-time hour up (log scale), one
     dot per stop coloured by its green-sheet range. Behind the dots, the green
@@ -192,14 +215,13 @@ def green_sheet_chart(pts, p):
                         line=dict(color=theme.BG, width=1)),
             customdata=[[x[0].stop, x[0].driver.title(), x[0].gallons, x[1],
                          x[1] / x[0].gallons if x[0].gallons else 0,
-                         calc.pph_onsite_threshold(p["breakeven_pph"], x[0].stop_mins, p),
-                         calc.pph_onsite_threshold(p["target_pph"], x[0].stop_mins, p)] for x in sel],
+                         "" if key in AT_TARGET else to_target_html(x, p, markup_freight.get(x[0].so))]
+                        for x in sel],
             hovertemplate=("<b>%{customdata[0]}</b><br>%{customdata[1]}<br>"
                            "%{customdata[2]:,.1f} gal · %{x:.0f} min onsite<br>"
                            "gross profit $%{customdata[3]:,.2f} · $%{customdata[4]:.3f}/gal<br>"
-                           f"<b>$%{{y:,.2f}} per stop-time hour</b> · {label}<br>"
-                           "breakeven $%{customdata[5]:,.0f} · target $%{customdata[6]:,.0f} "
-                           "per hour at this length<extra></extra>")))
+                           f"<b>$%{{y:,.2f}} per stop-time hour</b> · {label}"
+                           "%{customdata[5]}<extra></extra>")))
     ticks = [t for t in (50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000) if lo <= t <= hi]
     fig.update_layout(theme.chart_layout(
         height=420, margin=dict(l=10, r=10, t=10, b=10),
@@ -305,7 +327,8 @@ def render(data, qd):
             c1, c2 = st.columns([1, 2.6])
             c1.markdown("**Stops by Target Range**")
             c1.plotly_chart(target_donut(pts), width="stretch", config={"displayModeBar": False})
-            c2.plotly_chart(green_sheet_chart(pts, mk), width="stretch", config={"displayModeBar": False})
+            c2.plotly_chart(green_sheet_chart(pts, mk, calc.stop_markup_freight(data.billing, qd)),
+                            width="stretch", config={"displayModeBar": False})
             no_time = sum(1 for x in pts if not x[3])
             # \\$ so Streamlit's markdown doesn't read $…$ as LaTeX
             st.caption(
