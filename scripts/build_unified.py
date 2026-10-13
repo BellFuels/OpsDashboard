@@ -1603,6 +1603,18 @@ def main():
                 sys.exit(1)
             for bdate in sorted({l["Date"] for l in lines if l["Date"]}):
                 opis = opis_by_date.get(bdate)
+                opis_note = ""
+                if not opis:
+                    # OPIS isn't published Sunday — use the following Monday's rack (Chris's rule).
+                    try:
+                        _d = datetime.fromisoformat(bdate).date()
+                    except ValueError:
+                        _d = None
+                    if _d is not None and _d.weekday() == 6:  # Sunday
+                        _mon = (_d + timedelta(days=1)).isoformat()
+                        if opis_by_date.get(_mon):
+                            opis = opis_by_date[_mon]
+                            opis_note = f" (using Monday {_mon} OPIS for Sunday)"
                 if not opis:
                     print(f"\nWARNING: billing for {bdate} but no OPIS email for that date "
                           f"(have: {', '.join(sorted(opis_by_date)) or 'none'}) — gross profit skipped.")
@@ -1612,7 +1624,7 @@ def main():
                 sale = sum(r["Sale"] or 0 for r in rows)
                 gp = sum(r["GrossProfit"] or 0 for r in rows)
                 by_match = {k: sum(1 for r in rows if r["Match"] == k) for k in ("order", "gallons", "unmatched")}
-                print(f"\nGross profit {bdate}: {len(rows)} billing lines, sale excl taxes ${sale:,.2f}, "
+                print(f"\nGross profit {bdate}{opis_note}: {len(rows)} billing lines, sale excl taxes ${sale:,.2f}, "
                       f"gross profit ${gp:,.2f}")
                 print(f"  matched to deliveries: {by_match['order']} by order, "
                       f"{by_match['gallons']} by gallons, {by_match['unmatched']} unmatched")
