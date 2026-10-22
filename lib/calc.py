@@ -5,6 +5,7 @@ All functions take/return pandas DataFrames; formulas match v2 exactly.
 
 from datetime import date, datetime, timedelta
 
+import numpy as np
 import pandas as pd
 
 from lib.parsing import normalize_service_type
@@ -17,21 +18,28 @@ def roll_up_stops(df):
     product breakdown label, recomputed GPM."""
     if df.empty:
         return df.assign(product_label="")
-    rows = []
-    for (so, dt), group in df.groupby(["so", "date"], sort=False):
-        first = group.iloc[0]
-        gallons = group["gallons"].sum()
-        mins = group["stop_mins"].max()
-        label = " / ".join(f"{p}: {g:g}" for p, g in zip(group["product"], group["gallons"]))
-        rows.append({
-            "date": dt, "driver": first["driver"], "stop": first["stop"],
-            "so": so, "address": first["address"], "fleet_type": first["fleet_type"],
-            "cust_type": first["cust_type"], "arrival": first["arrival"],
-            "gallons": gallons, "stop_mins": mins, "units": first["units"],
-            "gpm": round(gallons / mins, 2) if pd.notna(mins) and mins > 0 else None,
-            "product_label": label,
-        })
-    return pd.DataFrame(rows)
+    # whole-table group operations rather than a Python loop per stop — the
+    # loop was most of the upload time once history passed ~6,000 stops
+    keys = [df["so"], df["date"]]
+    g = df.groupby(keys, sort=False)
+    # each stop's first line, in the order stops first appear (as the loop did)
+    first = df[g.cumcount() == 0].set_index(["so", "date"])
+    lines = df["product"].astype(str) + ": " + df["gallons"].map(lambda v: f"{v:g}")
+    out = first[["driver", "stop", "address", "fleet_type", "cust_type", "arrival", "units"]].copy()
+    # numpy sum per stop, as the loop's Series.sum: pandas' grouped sum adds with
+    # extra precision, which flips the odd half-cent GPM tie (10.785 -> .78/.79)
+    gal = df["gallons"].to_numpy(dtype=float)
+    sums = {k: gal[ix].sum() for k, ix in g.indices.items()}
+    out["gallons"] = [sums[k] for k in out.index]
+    out["stop_mins"] = g["stop_mins"].max()
+    out["product_label"] = lines.groupby(keys, sort=False).agg(" / ".join)
+    # over numpy arrays so round() gets numpy floats, as in the loop — on a plain
+    # Python float it rounds the odd tie the other way (10.785 -> 10.79, not .78)
+    out["gpm"] = [round(gal / m, 2) if pd.notna(m) and m > 0 else None
+                  for gal, m in zip(out["gallons"].to_numpy(), out["stop_mins"].to_numpy())]
+    out = out.reset_index()
+    return out[["date", "driver", "stop", "so", "address", "fleet_type", "cust_type", "arrival",
+                "gallons", "stop_mins", "units", "gpm", "product_label"]]
 
 
 def build_averages(rolled):
@@ -41,25 +49,39 @@ def build_averages(rolled):
                                      "avg_units", "avg_gpm", "avg_min_unit", "count",
                                      "fleet_type", "cust_type"]).set_index(["address", "stop"])
     src = rolled[rolled["address"] != ""]
+    keys = ["address", "stop"]
+    # numpy per stop on plain arrays — the old loop's arithmetic exactly (pandas'
+    # grouped mean adds with extra precision and flips the odd rounding tie),
+    # without its per-group pandas overhead, which was the slow part
+    gal = src["gallons"].to_numpy(dtype=float)
+    mins = src["stop_mins"].to_numpy(dtype=float)
+    units = src["units"].to_numpy(dtype=float)
+    gpm = src["gpm"].to_numpy(dtype=float)
     idx, rows = [], []
-    for (addr, stop), g in src.groupby(["address", "stop"]):
-        mins = g["stop_mins"].dropna()
-        gpms = g["gpm"].dropna()
-        gpms = gpms[gpms > 0]
-        mu = g[(g["stop_mins"].notna()) & (g["units"] > 0)]
-        min_units = mu["stop_mins"] / mu["units"]
-        idx.append((addr, stop))
+    for k, ix in sorted(src.groupby(keys).indices.items()):
+        m, gp, u = mins[ix], gpm[ix], units[ix]
+        m_ok, gp_ok = m[~np.isnan(m)], gp[(~np.isnan(gp)) & (gp > 0)]
+        mu = (~np.isnan(m)) & (u > 0)
+        idx.append(k)
         rows.append({
-            "avg_gallons": round(g["gallons"].mean(), 1),
-            "avg_stop_mins": round(mins.mean(), 1) if len(mins) else 0.0,
-            "avg_units": round(g["units"].mean(), 1),
-            "avg_gpm": round(gpms.mean(), 2) if len(gpms) else None,
-            "avg_min_unit": round(min_units.mean(), 2) if len(min_units) else None,
-            "count": len(g),
-            "fleet_type": g["fleet_type"].mode().iloc[0] if len(g["fleet_type"].mode()) else "",
-            "cust_type": g["cust_type"].mode().iloc[0] if len(g["cust_type"].mode()) else "",
+            "avg_gallons": round(gal[ix].mean(), 1),
+            "avg_stop_mins": round(m_ok.mean(), 1) if len(m_ok) else 0.0,
+            "avg_units": round(u.mean(), 1),
+            "avg_gpm": round(gp_ok.mean(), 2) if len(gp_ok) else None,
+            "avg_min_unit": round((m[mu] / u[mu]).mean(), 2) if mu.any() else None,
+            "count": len(ix),
         })
-    return pd.DataFrame(rows, index=pd.MultiIndex.from_tuples(idx, names=["address", "stop"]))
+    out = pd.DataFrame(rows, index=pd.MultiIndex.from_tuples(idx, names=keys))
+
+    def mode(col):
+        # most common value per stop, ties to the alphabetically first (as Series.mode)
+        n = src.groupby(keys + [col]).size().reset_index(name="n")
+        n = n.sort_values(keys + ["n", col], ascending=[True, True, False, True])
+        return n.drop_duplicates(keys).set_index(keys)[col]
+
+    out["fleet_type"] = mode("fleet_type").reindex(out.index).fillna("")
+    out["cust_type"] = mode("cust_type").reindex(out.index).fillna("")
+    return out
 
 
 # ─── Green sheet: lowest profitable markup ───────────────────────────────────

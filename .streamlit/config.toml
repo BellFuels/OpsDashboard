@@ -11,3 +11,9 @@ font = "sans-serif"
 
 [browser]
 gatherUsageStats = false
+
+[server]
+# keep a session (and its loaded unified file) for 12 hours after the browser
+# disconnects (laptop asleep, tab parked, Wi-Fi drop) instead of the 2-minute
+# default; a loaded file is ~5.5 MB, so idle sessions are cheap
+disconnectedSessionTTL = 43200
