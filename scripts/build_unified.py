@@ -85,6 +85,15 @@ BILLING_COLUMNS = ["Date", "Order", "SO", "Match", "Account", "Driver", "Product
                    "Qty", "Sale", "UnitCost", "CostSource", "Cost", "GrossProfit",
                    "Freight", "SheetMarkup"]
 BILLING_FLOAT_COLUMNS = ("Qty", "Sale", "UnitCost", "Cost", "GrossProfit", "Freight", "SheetMarkup")
+# OPIS sheet: one row per date in OPIS/Bell_Fuels_OPIS_Price_Log.xlsx, rewritten
+# from the log on every build (the log is the source of truth). Rack $/gal for
+# the five logged products plus Chicago spot; Gulf spot is left out on purpose.
+OPIS_LOG_COLUMNS = {"ULSD #2 Clear": "ULSDClear", "ULSD #2 Dyed": "ULSDDyed",
+                    "Unleaded 87 Reg": "Unl87", "B20 ULS No.2": "B20Clear",
+                    "B20 ULS2 RD": "B20Dyed", "Chi Spot Diesel": "ChiSpotDiesel",
+                    "Chi Spot Gas": "ChiSpotGas"}
+OPIS_FLOAT_COLUMNS = tuple(OPIS_LOG_COLUMNS.values())
+OPIS_COLUMNS = ["Date", "Session", *OPIS_FLOAT_COLUMNS]
 
 
 TERMINAL_NOTE_RE = re.compile(r"\bterminal\b", re.I)
@@ -1137,6 +1146,74 @@ def opis_unit_cost(opis, code):
     return (opis["sections"].get(sec[0]) or {}).get(sec[1]) if sec else None
 
 
+# Price-log column -> (OPIS section title, column) that OPIS_PRODUCTS expects.
+# The log carries $/gal already and only these five products; any other code
+# (premium gas, No.1 distillate, kerosene, B17) has no log price and falls back
+# to "No price" unless a .msg OPIS email supplies it.
+OPIS_LOG_MAP = {
+    "ULSD #2 Clear":   (OPIS_ULSD, "No.2"),
+    "ULSD #2 Dyed":    (OPIS_ULSD_RD, "No.2"),
+    "Unleaded 87 Reg": (OPIS_E10, "Unl"),
+    "B20 ULS No.2":    (OPIS_B20, "No.2"),
+    "B20 ULS2 RD":     (OPIS_B20, "RD"),
+}
+
+
+def read_opis_log(path):
+    """Read the OPIS price-log workbook into {iso_date: row}, keyed by the log's
+    own column headers plus "Session" (Morning/Closing). One row per date; a
+    Morning row is preferred over a Closing row for the same date."""
+    if not os.path.isfile(path):
+        return {}
+    wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
+    try:
+        ws = wb["Price Log"] if "Price Log" in wb.sheetnames else wb.active
+        rows = list(ws.iter_rows(values_only=True))
+    finally:
+        wb.close()
+    if not rows:
+        return {}
+    hdr = [cell_str(h) for h in rows[0]]
+    idx = {h: i for i, h in enumerate(hdr)}
+    if "Date" not in idx:
+        return {}
+    wanted = set(OPIS_LOG_MAP) | set(OPIS_LOG_COLUMNS)
+    out = {}
+    for r in rows[1:]:
+        if not r or idx["Date"] >= len(r) or r[idx["Date"]] in (None, ""):
+            continue
+        iso = extract_date_iso(r[idx["Date"]])
+        if not iso:
+            continue
+        kind = cell_str(r[idx["File"]]) if "File" in idx and idx["File"] < len(r) else ""
+        if iso in out and out[iso]["Session"] == "Morning" and kind != "Morning":
+            continue
+        row = {"Session": kind}
+        for col in wanted:
+            row[col] = parse_float(r[idx[col]]) if col in idx and idx[col] < len(r) else None
+        out[iso] = row
+    return out
+
+
+def opis_log_sections(log):
+    """{iso_date: opis dict} shaped like parse_opis output, from read_opis_log,
+    so gross profit can be costed from the log instead of per-day .msg emails."""
+    out = {}
+    for iso, row in log.items():
+        sections = {}
+        for logcol, (sec, column) in OPIS_LOG_MAP.items():
+            sections.setdefault(sec, {})[column] = row.get(logcol)
+        out[iso] = {"date": iso, "sections": sections}
+    return out
+
+
+def opis_sheet_rows(log):
+    """The unified file's OPIS sheet rows (OPIS_COLUMNS) from read_opis_log."""
+    return [{"Date": iso, "Session": row["Session"],
+             **{uni: row.get(logcol) for logcol, uni in OPIS_LOG_COLUMNS.items()}}
+            for iso, row in sorted(log.items())]
+
+
 def parse_billing(path):
     """Billing lines from the S&P_CALCULATOR sheet: one dict per line with an
     Account #; the trailing =SUM totals row has none and is skipped."""
@@ -1250,7 +1327,7 @@ def blank_unified():
             "shift_split_time": "12:00", "threshold": "20", "dvir_mins": "20",
             "driver_order": ",".join(DRIVER_SENIORITY)}
     return {"deliveries": [], "payroll": [], "punches": [], "customers": [], "notes": [], "billing": [],
-            "name_map": dict(DEFAULT_NAME_MAP), "meta": meta}
+            "opis": [], "name_map": dict(DEFAULT_NAME_MAP), "meta": meta}
 
 
 def read_unified(path):
@@ -1276,7 +1353,8 @@ def read_unified(path):
                     row[col] = clock_text(v)
                 elif col in ("Arrival", "Departure"):
                     row[col] = arrival_to_text(v)
-                elif col in ("Gallons", "GPM", "Hours") or col in BILLING_FLOAT_COLUMNS:
+                elif col in ("Gallons", "GPM", "Hours") or col in BILLING_FLOAT_COLUMNS \
+                        or col in OPIS_FLOAT_COLUMNS:
                     row[col] = parse_float(v)
                 elif col in ("StopMins", "Units", "Seq"):
                     f = parse_float(v)
@@ -1292,6 +1370,7 @@ def read_unified(path):
     data["customers"] = sheet_rows("Customers", CUSTOMER_COLUMNS)
     data["notes"] = sheet_rows("Notes", NOTES_COLUMNS)
     data["billing"] = sheet_rows("Billing", BILLING_COLUMNS)
+    data["opis"] = sheet_rows("OPIS", OPIS_COLUMNS)
     if "NameMap" in wb.sheetnames:
         it = wb["NameMap"].iter_rows(values_only=True)
         next(it, None)
@@ -1337,6 +1416,7 @@ def write_unified(path, data, build_date):
               key=lambda r: (r["Date"], r["Driver"], r["Start"]))
     add_sheet("Billing", BILLING_COLUMNS, data.get("billing", []),
               key=lambda r: (r["Date"], r["Order"], r["Product"], r["Qty"] or 0))
+    add_sheet("OPIS", OPIS_COLUMNS, data.get("opis", []), key=lambda r: r["Date"])
 
     nm = wb.create_sheet("NameMap")
     nm.append(["PayrollName", "DisplayName"])
@@ -1447,6 +1527,8 @@ def main():
     ap.add_argument("--inbox", default=os.path.join(root, "inbox"))
     ap.add_argument("--out", default=os.path.join(root, "unified"))
     ap.add_argument("--processed", default=os.path.join(root, "processed"))
+    ap.add_argument("--opis-log", default=os.path.join(root, "OPIS", "Bell_Fuels_OPIS_Price_Log.xlsx"),
+                    help="OPIS price-log workbook used to cost gross profit when no .msg email is present")
     ap.add_argument("--window", type=int, default=None, help="Override rolling window (days)")
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--no-archive", action="store_true", help="Leave inbox files in place")
@@ -1586,6 +1668,18 @@ def main():
     if moved:
         print(f"Split: moved {moved} single-unit row(s) to a separate TANK stop")
 
+    # ── OPIS price log: rack + Chicago spot for the dashboard's Trends view ──
+    #    (rewritten from the log each build; without the log the prior sheet stays)
+    opis_log = read_opis_log(args.opis_log)
+    if opis_log:
+        data["opis"] = opis_sheet_rows(opis_log)
+        spot = sum(1 for r in data["opis"] if r["ChiSpotDiesel"] is not None)
+        print(f"\nOPIS sheet: {len(data['opis'])} date(s) from the price log "
+              f"({min(opis_log)} to {max(opis_log)}), {spot} with Chicago spot")
+    else:
+        print(f"\nOPIS sheet: no price log at {args.opis_log} — kept the prior file's "
+              f"{len(data.get('opis', []))} row(s)")
+
     # ── gross profit: Billing Worksheet + the same day's OPIS email ──
     if classified["opis"] and not classified["billing"]:
         print("\nWARNING: OPIS email with no Billing Worksheet — gross profit skipped.")
@@ -1595,26 +1689,68 @@ def main():
             o = parse_opis(f)
             if o["date"]:
                 opis_by_date[o["date"]] = o
+        # Fill any date without a .msg email from the OPIS price log.
+        log_opis = opis_log_sections(opis_log)
+        for d, o in log_opis.items():
+            opis_by_date.setdefault(d, o)
+        if log_opis:
+            print(f"OPIS price log: {len(log_opis)} date(s) available "
+                  f"({min(log_opis)} to {max(log_opis)})")
+        # Aggregate lines across ALL billing worksheets BEFORE grouping by date.
+        # A single date can be split across worksheets (e.g. late-posted orders
+        # land on the next day's sheet); processing files one at a time made the
+        # second file's replace_by_date wipe the first file's rows for that date.
+        all_lines = []
+        contract = {}
+        # contract_by_date keeps each date's price-check baseline tied to the
+        # worksheet it mostly came from, so batching several worksheets doesn't
+        # make one day's check compare against another day's master price list.
+        contract_by_date, _best_count = {}, {}
         for f in classified["billing"]:
             try:
-                lines, contract = parse_billing(f)
+                lines, c = parse_billing(f)
             except (ValueError, KeyError) as e:
                 print(f"\nERROR parsing billing worksheet {os.path.basename(f)}: {e}")
                 sys.exit(1)
+            all_lines.extend(lines)
+            contract.update(c)
+            day_counts = {}
+            for l in lines:
+                if l["Date"]:
+                    day_counts[l["Date"]] = day_counts.get(l["Date"], 0) + 1
+            for d, cnt in day_counts.items():
+                if cnt > _best_count.get(d, 0):
+                    _best_count[d] = cnt
+                    contract_by_date[d] = c
+        # De-duplicate identical (Date, Order, Product, Qty, Sale) lines that
+        # appear on more than one worksheet, so an order carried on two sheets
+        # isn't double-counted.
+        seen = set()
+        lines = []
+        for l in all_lines:
+            key = (l["Date"], l["Order"], l["Product"], l["Qty"], l["Sale"])
+            if key in seen:
+                continue
+            seen.add(key)
+            lines.append(l)
+        if True:
             for bdate in sorted({l["Date"] for l in lines if l["Date"]}):
                 opis = opis_by_date.get(bdate)
                 opis_note = ""
                 if not opis:
-                    # OPIS isn't published Sunday — use the following Monday's rack (Chris's rule).
+                    # OPIS isn't logged on weekends — Saturday and Sunday both take
+                    # the following Monday's rack (Chris's rule; the Saturday file is
+                    # identical to Monday, and Sunday has no file).
                     try:
                         _d = datetime.fromisoformat(bdate).date()
                     except ValueError:
                         _d = None
-                    if _d is not None and _d.weekday() == 6:  # Sunday
-                        _mon = (_d + timedelta(days=1)).isoformat()
+                    if _d is not None and _d.weekday() in (5, 6):  # Sat / Sun
+                        _dow = "Saturday" if _d.weekday() == 5 else "Sunday"
+                        _mon = (_d + timedelta(days=7 - _d.weekday())).isoformat()
                         if opis_by_date.get(_mon):
                             opis = opis_by_date[_mon]
-                            opis_note = f" (using Monday {_mon} OPIS for Sunday)"
+                            opis_note = f" (using Monday {_mon} OPIS for {_dow})"
                 if not opis:
                     print(f"\nWARNING: billing for {bdate} but no OPIS email for that date "
                           f"(have: {', '.join(sorted(opis_by_date)) or 'none'}) — gross profit skipped.")
@@ -1638,12 +1774,17 @@ def main():
                     if r["CostSource"] == "No price":
                         print(f"  WARNING no OPIS price for product {r['Product']} "
                               f"(order {r['Order']}) — no gross profit on that line")
-                # the worksheet's costs come from the master price list; it should agree with OPIS
-                for code in OPIS_CHECK_CODES:
-                    w, o = contract.get(code), opis_unit_cost(opis, code)
-                    if w and o is not None and abs(w - o) > 0.00005:
-                        print(f"  WARNING price check {code}: OPIS ${o:.4f} vs worksheet ${w:.4f} "
-                              f"— master price list may be stale")
+                # the worksheet's costs come from the master price list; it should
+                # agree with OPIS. Skip on weekends: the Saturday/Sunday rule uses
+                # Monday's OPIS on purpose, so it won't match the worksheet's own
+                # (weekend) price list and a mismatch there isn't staleness.
+                day_contract = contract_by_date.get(bdate, contract)
+                if not opis_note:
+                    for code in OPIS_CHECK_CODES:
+                        w, o = day_contract.get(code), opis_unit_cost(opis, code)
+                        if w and o is not None and abs(w - o) > 0.00005:
+                            print(f"  WARNING price check {code}: OPIS ${o:.4f} vs worksheet ${w:.4f} "
+                                  f"— master price list may be stale")
 
     # ── payroll ──
     unmapped_names = set()
@@ -1689,9 +1830,21 @@ def main():
     data["punches"] = prune_window(data["punches"], build_date, window_days)
     data["notes"] = prune_window(data.get("notes", []), build_date, window_days)
     data["billing"] = prune_window(data.get("billing", []), build_date, window_days)
+    data["opis"] = prune_window(data.get("opis", []), build_date, window_days)
     if before != len(data["deliveries"]):
         print(f"\nWindow trim: dropped {before - len(data['deliveries'])} delivery rows "
               f"older than {window_days} days")
+
+    # ── BTY rule: show back-to-yard only when the shift is shorter than 8h29m ──
+    BTY_MAX_HOURS = 8 + 29 / 60  # 8:29; shifts at/over this can't have a BTY
+    bty_cleared = 0
+    for r in data["payroll"]:
+        hrs = r.get("Hours")
+        if isinstance(hrs, (int, float)) and hrs >= BTY_MAX_HOURS and r.get("BackToYard") not in (None, ""):
+            r["BackToYard"] = ""
+            bty_cleared += 1
+    if bty_cleared:
+        print(f"BTY rule: cleared back-to-yard on {bty_cleared} payroll row(s) at/over 8h29m")
 
     # ── meta ──
     dates = sorted({r["Date"] for r in data["deliveries"] if r["Date"]})

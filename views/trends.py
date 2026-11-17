@@ -28,6 +28,12 @@ OPIS_OF = {"190": "ULSD #2 clear", "191": "ULSD #2 clear", "192": "ULSD #2 dyed"
            "200": "B20 clear", "201": "B20 clear", "202": "B20 dyed", "203": "B20 dyed",
            "070": "87 unleaded (E10)"}
 OPIS_PRODUCTS = ["ULSD #2 clear", "ULSD #2 dyed", "B20 clear", "B20 dyed", "87 unleaded (E10)"]
+# the OPIS sheet's rack columns (lib/parsing.py OPIS_PRICE_COLUMNS) -> the names above
+LOG_RACK = {"ulsd_clear": "ULSD #2 clear", "ulsd_dyed": "ULSD #2 dyed", "b20_clear": "B20 clear",
+            "b20_dyed": "B20 dyed", "unl87": "87 unleaded (E10)"}
+# rack product, its Chicago spot column, label, colour (the rack product's own)
+SPOT_PAIRS = [("ULSD #2 clear", "chi_spot_diesel", "diesel", theme.SERIES[0]),
+              ("87 unleaded (E10)", "chi_spot_gas", "gasoline", theme.SERIES[4])]
 HOVER = dict(bgcolor=theme.CARD_BG_2, bordercolor=theme.BORDER, font=dict(color=theme.INK))
 MAX_STOP_MINS = 720  # longer than a 12-hour stop is a data error, not a stop
 
@@ -162,42 +168,106 @@ def gallons_section(data, start, end, grain):
 
 # ─── OPIS prices ─────────────────────────────────────────────────────────────
 
-def opis_section(data, start, end, grain):
-    b = data.billing
-    b = b[(b["date"] >= start) & (b["date"] <= end) & (b["qty"] > 0) & b["cost"].notna()].copy()
-    b["product_name"] = b["product"].astype(str).str[:3].map(OPIS_OF)
-    b = b[b["product_name"].notna()]
-    if b.empty:
-        st.info("No OPIS-priced billing in this range — gross profit (and its OPIS costs) starts 10/1.")
+def by_period(daily, grain):
+    """Per-date prices (index = ISO date) -> the mean per period; days with no
+    price stay out of the mean, and a period with none stays blank (a gap)."""
+    return daily.groupby(period_of(pd.Series(daily.index, index=daily.index), grain)).mean().sort_index()
+
+
+def price_tile(col, label, s, delta_color="inverse"):
+    """Latest value and its change over the range (first to last day with one)."""
+    s = s.dropna()
+    if not len(s):
+        col.metric(label, "—")
         return
-    # unit cost each billed day was costed at = that day's OPIS contract average
-    b["price"] = b["cost"] / b["qty"]
-    daily = b.groupby(["date", "product_name"])["price"].median().unstack()
-    per = daily.groupby(period_of(pd.Series(daily.index, index=daily.index), grain)).mean().sort_index()
+    v = s.iloc[-1]
+    col.metric(label, f"{'−' if v < 0 else ''}${abs(v):.4f}", f"{(v - s.iloc[0]) * 100:+.1f}¢ over the range",
+               delta_color=delta_color)
+
+
+def price_layout(fig, grain, height=380):
+    fig.update_layout(hovermode="x unified")
+    layout(fig, grain, "$ per gallon", height=height, y_prefix="$", y_format=".2f")
+    fig.update_yaxes(rangemode="normal")  # prices move within ~$2–5; a zero baseline flattens them
+    return fig
+
+
+def opis_section(data, start, end, grain):
+    log = data.opis if data.opis is not None else pd.DataFrame()
+    log = log[(log["date"] >= start) & (log["date"] <= end)].set_index("date") if len(log) else log
+    if len(log):
+        # the price log itself (the builder copies it into the OPIS sheet)
+        daily = log[list(LOG_RACK)].rename(columns=LOG_RACK)
+        source = ("OPIS price log (Morning file), every logged weekday. Billed days are costed at these "
+                  "prices; Saturday and Sunday billing uses the following Monday's.")
+    else:
+        # older files: the unit cost each billed day was costed at
+        b = data.billing
+        b = b[(b["date"] >= start) & (b["date"] <= end) & (b["qty"] > 0) & b["cost"].notna()].copy()
+        b["product_name"] = b["product"].astype(str).str[:3].map(OPIS_OF)
+        b = b[b["product_name"].notna()]
+        if b.empty:
+            st.info("No OPIS prices in this range — the price log and gross profit start 10/1.")
+            return
+        b["price"] = b["cost"] / b["qty"]
+        daily = b.groupby(["date", "product_name"])["price"].median().unstack()
+        source = ("The price each billed day was costed at (this file has no OPIS sheet; Chicago spot "
+                  "appears once the file is built with the price log).")
+    per = by_period(daily, grain)
+    shown = [p for p in OPIS_PRODUCTS if p in per and per[p].notna().any()]
     st.markdown("##### OPIS rack price (contract average, $/gal)")
-    tiles = st.columns(len([p for p in OPIS_PRODUCTS if p in per]))
+    tiles = st.columns(len(shown))
     fig = go.Figure()
-    shown = [p for p in OPIS_PRODUCTS if p in per]
     for i, p in enumerate(OPIS_PRODUCTS):
-        if p not in per:
+        if p not in shown:
             continue
         s = per[p].dropna()
         fig.add_trace(go.Scatter(x=s.index, y=s.values, name=p, mode="lines+markers",
                                  line=dict(color=theme.SERIES[i], width=2), marker=dict(size=6),
                                  hovertemplate=f"{p} <b>$%{{y:.4f}}</b><extra></extra>"))
-        if len(s):
-            delta = (s.iloc[-1] - s.iloc[0]) * 100
-            tiles[shown.index(p)].metric(p, f"${s.iloc[-1]:.4f}", f"{delta:+.1f}¢ over the range",
-                                         delta_color="inverse")
-    fig.update_layout(hovermode="x unified")
-    layout(fig, grain, "$ per gallon", height=380, y_prefix="$", y_format=".2f")
-    fig.update_yaxes(rangemode="normal")  # prices move within ~$2–5; a zero baseline flattens them
-    show(fig)
-    st.caption("The price each billed day was costed at, from the day's OPIS email or price log (Sundays "
-               "use Monday's). Chicago and Gulf spot prices will follow once the price log is carried in "
-               "the unified file.")
+        price_tile(tiles[shown.index(p)], p, per[p])
+    show(price_layout(fig, grain))
+    st.caption(source)
+    table = per[shown]
+
+    if len(log) and log[["chi_spot_diesel", "chi_spot_gas"]].notna().any().any():
+        spot = by_period(log[["chi_spot_diesel", "chi_spot_gas"]], grain)
+        table = table.join(spot.rename(columns={"chi_spot_diesel": "Chicago spot diesel",
+                                                "chi_spot_gas": "Chicago spot gasoline"}))
+        st.markdown("##### Rack vs Chicago spot ($/gal)")
+        t = st.columns(4)
+        left, right = st.columns(2)
+        for (rack_name, spot_col, label, color), col, (t1, t2) in zip(
+                SPOT_PAIRS, (left, right), ((t[0], t[1]), (t[2], t[3]))):
+            rack, sp = per[rack_name], spot[spot_col]
+            # spread over the days that have both, so a missing spot day can't skew it
+            both = daily[[rack_name]].join(log[[spot_col]]).dropna()
+            spread = by_period(both[rack_name] - both[spot_col], grain).reindex(per.index)
+            table[f"{label} rack − spot"] = spread
+            price_tile(t1, f"Chicago spot {label}", sp)
+            price_tile(t2, f"{label.capitalize()} rack over spot", spread, delta_color="off")
+            fig = go.Figure()
+            fig.add_trace(go.Scatter(x=rack.index, y=rack.values, name=f"{rack_name} rack",
+                                     mode="lines+markers", line=dict(color=color, width=2), marker=dict(size=6),
+                                     hovertemplate=f"{rack_name} rack <b>$%{{y:.4f}}</b><extra></extra>"))
+            # gaps stay gaps: a line across days the log has no spot would invent prices
+            fig.add_trace(go.Scatter(x=sp.index, y=sp.values, name=f"Chicago spot {label}",
+                                     mode="lines+markers", connectgaps=False,
+                                     line=dict(color=color, width=2, dash="dash"),
+                                     marker=dict(size=7, symbol="circle-open"),
+                                     customdata=spread.reindex(sp.index).values,
+                                     hovertemplate=f"Chicago spot {label} <b>$%{{y:.4f}}</b>"
+                                                   "<br>rack over spot <b>%{customdata:$.4f}</b><extra></extra>"))
+            with col:
+                st.markdown(f"**{label.capitalize()}**")
+                show(price_layout(fig, grain, height=320))
+        missing = int(log["chi_spot_diesel"].isna().sum())
+        st.caption("Solid line: the rack price; dashed: Chicago spot from the same OPIS file. Rack over spot "
+                   "is the rack minus spot on days with both."
+                   + (f" {missing} logged day(s) in this range have no spot price (the OPIS file couldn't be "
+                      "re-read), so the dashed line has gaps there." if missing else ""))
     with st.expander("Data"):
-        st.dataframe(per.round(4).rename_axis(period_label(grain)).reset_index(), hide_index=True)
+        st.dataframe(table.round(4).rename_axis(period_label(grain)).reset_index(), hide_index=True)
 
 
 # ─── Gross profit ────────────────────────────────────────────────────────────

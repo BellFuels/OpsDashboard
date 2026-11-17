@@ -189,6 +189,12 @@ def normalize_service_type(v):
 
 # ─── Workbook loading ────────────────────────────────────────────────────────
 
+# OPIS sheet: dashboard column -> the builder's header (scripts/build_unified.py
+# OPIS_COLUMNS). Gulf spot isn't carried.
+OPIS_PRICE_COLUMNS = {"ulsd_clear": "ULSDClear", "ulsd_dyed": "ULSDDyed", "unl87": "Unl87",
+                      "b20_clear": "B20Clear", "b20_dyed": "B20Dyed",
+                      "chi_spot_diesel": "ChiSpotDiesel", "chi_spot_gas": "ChiSpotGas"}
+
 @dataclass
 class UnifiedData:
     deliveries: pd.DataFrame
@@ -207,6 +213,9 @@ class UnifiedData:
     # one row per billing line: date, order, so, match, account, product, qty,
     # sale, cost, gross_profit (empty for files built before gross profit)
     billing: pd.DataFrame = field(default=None)
+    # one row per date from the OPIS price log: rack $/gal (OPIS_PRICE_COLUMNS)
+    # plus Chicago spot; empty for files built before the OPIS sheet
+    opis: pd.DataFrame = field(default=None)
     deliveries_no_fleet: pd.DataFrame = field(default=None)
     rolled_history: pd.DataFrame = field(default=None)
     averages: pd.DataFrame = field(default=None)
@@ -521,6 +530,24 @@ def load_unified(file_bytes: bytes) -> UnifiedData:
                                                "qty", "sale", "cost", "gross_profit",
                                                "freight", "sheet_markup"])
 
+        # OPIS (the price log the builder copies in: rack and Chicago spot per
+        # date); read by header so a column added later can't shift the rest.
+        orows = []
+        osheet = wb.rows("OPIS") if "OPIS" in wb.sheetnames else []
+        if osheet:
+            hdr = {cell_str(h): i for i, h in enumerate(osheet[0])}
+            for raw in osheet[1:]:
+                def col(name):
+                    i = hdr.get(name)
+                    return raw[i] if i is not None and i < len(raw) else None
+                date = extract_date_iso(col("Date"))
+                if date:
+                    orows.append({"date": date, **{k: parse_float(col(src))
+                                                   for k, src in OPIS_PRICE_COLUMNS.items()}})
+        opis = pd.DataFrame(orows, columns=["date", *OPIS_PRICE_COLUMNS])
+        if len(opis):
+            opis = opis.drop_duplicates("date", keep="last").sort_values("date").reset_index(drop=True)
+
         payroll = pd.DataFrame(prows, columns=["date", "driver", "hours", "clock_in",
                                                "clock_out", "back_to_yard",
                                                "downtime_start", "downtime_end",
@@ -597,7 +624,7 @@ def load_unified(file_bytes: bytes) -> UnifiedData:
                        customers=customers, notes=notes, meta=meta, product_map=product_map,
                        benchmarks=benchmarks, shift_split_time=shift_split,
                        threshold=threshold, dvir_mins=dvir_mins, driver_order=driver_order,
-                       markup=markup, billing=billing)
+                       markup=markup, billing=billing, opis=opis)
     data.deliveries_no_fleet = deliveries[~deliveries["is_fleet"] & ~deliveries["is_terminal"]].reset_index(drop=True)
 
     # rolled history + averages are computed once here (calc imports parsing, not vice versa)
