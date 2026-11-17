@@ -48,6 +48,12 @@ RED_BG = "background-color: rgba(232,86,64,0.20)"
 YELLOW_BG = "background-color: rgba(242,167,60,0.18)"
 ORANGE_BG = "background-color: rgba(230,100,20,0.15)"
 GREEN_FG = f"color: {GREEN}"
+# Categorical series for the Trends charts, in fixed order (colour follows the
+# entity, never its rank): blue, orange, aqua, yellow, magenta. Validated on the
+# card (#15232E) with the dataviz palette checker: adjacent colour-blind ΔE ≥ 8.4,
+# normal-vision ΔE ≥ 19.3, all ≥ 3:1 contrast. Five per chart at most; scatter-
+# style charts take the first three. "Other" is neutral MUTED, not a sixth hue.
+SERIES = ["#3987e5", "#d95926", "#199e70", "#c98500", "#d55181"]
 # THE GREEN SHEET's five target ranges (Quick View chart + Daily Route Performance)
 LIME = "#C9D63A"             # meets breakeven
 PURPLE = "#A07BE0"           # too high

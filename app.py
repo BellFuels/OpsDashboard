@@ -18,7 +18,7 @@ import streamlit as st
 
 from lib import theme
 from lib.parsing import ALL_SERVICE_TYPES, UnifiedData, UnifiedFileError, fmt_hhmmss, load_unified
-from views import daily, drivers, payroll, quick_view, route_sheets, stops
+from views import daily, drivers, payroll, quick_view, route_sheets, stops, trends
 from views.common import day_label, iso_to_mdy, nearest_date
 
 VIEWS = {
@@ -28,6 +28,7 @@ VIEWS = {
     "Drivers": drivers,
     "Payroll & HOS": payroll,
     "Route Sheets": route_sheets,
+    "Trends": trends,
 }
 # views that work before a unified file is loaded (render gets data=None)
 NO_FILE_VIEWS = {"Route Sheets"}
