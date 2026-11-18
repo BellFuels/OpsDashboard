@@ -331,66 +331,117 @@ def gross_profit_section(data, start, end, grain):
                      .reset_index(), hide_index=True)
 
 
-def heat(df, cols):
-    """Cell shading for the route table: one hue, stronger for more gross profit
-    (scaled over the driver cells only, so the Total column can't wash them out,
-    and to the 95th percentile, so one huge day doesn't pale every other cell)."""
-    vals = df[cols].stack()
-    top = vals.quantile(0.95) if len(vals) else 0
-    r, g, b = (int(theme.SERIES[0][i:i + 2], 16) for i in (1, 3, 5))
+def money(v):
+    return "" if v is None or pd.isna(v) else f"{'−' if v < 0 else ''}${abs(v):,.0f}"
 
-    def cell(v):
-        if pd.isna(v) or not top or v <= 0:
-            return ""
-        return f"background-color: rgba({r},{g},{b},{0.08 + 0.5 * min(v / top, 1):.2f})"
-    styles = pd.DataFrame("", index=df.index, columns=df.columns)
-    styles[cols] = df[cols].map(cell)
-    # text cells: st.dataframe shows a missing number as "None" whatever the
-    # Styler's na_rep says, and a day the driver didn't run should read blank
-    text = df.map(lambda v: "" if pd.isna(v) else f"{'−' if v < 0 else ''}${abs(v):,.0f}")
-    return text.style.apply(lambda _: styles, axis=None)
+
+def band_of(gp, hours, p):
+    """Green-sheet target range for gross profit over paid hours (None without hours)."""
+    if hours is None or pd.isna(hours) or hours <= 0 or gp is None or pd.isna(gp):
+        return None
+    return calc.pph_band(gp / hours, p)
+
+
+def band_table(gp, bands):
+    """The route table: gross profit as text (st.dataframe shows a missing number
+    as "None" whatever the Styler says, and a day off should read blank), each
+    driver cell filled with its target range's colour."""
+    styles = bands.map(lambda k: f"background-color: {theme.BAND_BG[k]}" if k in theme.BAND_BG else "")
+    styles = styles.reindex(index=gp.index, columns=gp.columns).fillna("")
+    return gp.map(money).style.apply(lambda _: styles, axis=None)
+
+
+def band_legend():
+    chips = "".join(f"<span style='display:inline-flex;align-items:center;gap:6px;margin-right:16px'>"
+                    f"<span style='width:12px;height:12px;border-radius:3px;background:{theme.BAND_BG[k]};"
+                    f"border:1px solid {theme.BAND_COLOR[k]}'></span>{label}</span>"
+                    for k, label, _ in calc.GREEN_SHEET_BANDS)
+    st.markdown(f"<div style='font-size:12.5px;color:{theme.MUTED};margin:2px 0 8px'>{chips}</div>",
+                unsafe_allow_html=True)
 
 
 def route_section(data, b, grain):
     """Gross profit per route — each billing line matched to the driver who
-    delivered its SO that day, summed per driver per day."""
+    delivered its SO that day, summed per driver per day — coloured by its
+    green-sheet target range: gross profit per paid hour (payroll) against the
+    same Min / Breakeven / Target / Too High rates as the stops."""
     routes = calc.route_gross_profit(b, data.deliveries)
     routes = routes[routes["gross_profit"].notna()]
     if routes.empty:
         return
-    routes = routes.assign(name=routes["driver"].map(lambda d: d if d == calc.UNMATCHED_ROUTE else d.title()))
+    p = markup_params(data)
+    pay = calc.route_paid_hours(data.payroll)
+    no_pay = {calc.UNMATCHED_ROUTE, THIRD_PARTY_DRIVER}
+    routes = routes.assign(
+        name=routes["driver"].map(lambda d: d if d == calc.UNMATCHED_ROUTE else d.title()),
+        paid=[None if dr in no_pay else pay.get((d, calc.first_name(dr)))
+              for d, dr in zip(routes["date"], routes["driver"])],
+        period=period_of(routes["date"], grain))
+    routes["band"] = [band_of(g, h, p) for g, h in zip(routes["gross_profit"], routes["paid"])]
     real = routes[routes["driver"] != calc.UNMATCHED_ROUTE]
+
     st.markdown("##### Gross profit by route")
-    left, right = st.columns([1, 1.6])
+    left, right = st.columns([1.4, 1])
     with left:
-        # average per route (driver-day), so a driver with fewer days isn't penalised
-        per = real.groupby("name").agg(avg=("gross_profit", "mean"), routes=("date", "nunique"),
-                                       total=("gross_profit", "sum")).sort_values("avg", ascending=False)
-        fig = hbar(list(per.index), list(per["avg"]), theme.SERIES[0], "average gross profit per route",
-                   "${:,.0f}")
-        fig.update_traces(customdata=per[["routes", "total"]].values,
-                          hovertemplate="%{y}<br><b>%{text}</b> per route<br>%{customdata[0]} routes · "
-                                        "$%{customdata[1]:,.0f} total<extra></extra>")
-        show(fig)
+        st.markdown("**Routes by target range**")
+        tab = routes.dropna(subset=["band"]).pivot_table(index="period", columns="band", values="driver",
+                                                         aggfunc="count", fill_value=0)
+        fig = go.Figure()
+        for key, label, _ in calc.GREEN_SHEET_BANDS:
+            if key in tab:
+                fig.add_trace(go.Bar(x=tab.index, y=tab[key], name=label,
+                                     marker=dict(color=theme.BAND_COLOR[key], line=dict(color=theme.CARD_BG, width=1)),
+                                     hovertemplate=f"{label}<br>%{{x|%b %d}}: <b>%{{y}} routes</b><extra></extra>"))
+        fig.update_layout(barmode="stack")
+        show(layout(fig, grain, "routes"))
     with right:
-        # rows = periods (latest first), columns = drivers by total, then Unmatched and Total
-        tab = routes.assign(period=period_of(routes["date"], grain)).pivot_table(
-            index="period", columns="name", values="gross_profit", aggfunc="sum")
-        drivers = list(per.sort_values("total", ascending=False).index)
-        cols = drivers + ([calc.UNMATCHED_ROUTE] if calc.UNMATCHED_ROUTE in tab else [])
-        tab = tab.reindex(columns=cols)
-        tab["Total"] = tab.sum(axis=1, min_count=1)
-        tab = tab.sort_index(ascending=False)
-        tab.index = [pd.Timestamp(p).strftime("%a %m/%d" if grain == "Daily" else
-                                             "wk %m/%d" if grain == "Weekly" else "%b %Y") for p in tab.index]
-        tab.index.name = period_label(grain)
-        st.dataframe(heat(tab, drivers), height=min(38 + 35 * len(tab), 460))
+        st.markdown("**Average per route, by driver**")
+        # average per route (driver-day), so a driver with fewer days isn't penalised;
+        # bar colour = the driver's range over the whole range (total GP ÷ total paid hours)
+        per = real.groupby("name").agg(avg=("gross_profit", "mean"), routes=("date", "nunique"),
+                                       total=("gross_profit", "sum"), paid=("paid", "sum"))
+        per = per.sort_values("avg", ascending=False)
+        per["rate"] = per["total"] / per["paid"].where(per["paid"] > 0)
+        per["band"] = [band_of(t, h, p) for t, h in zip(per["total"], per["paid"])]
+        fig = hbar(list(per.index), list(per["avg"]),
+                   [theme.BAND_COLOR.get(k, theme.MUTED) for k in per["band"]],
+                   "average gross profit per route", "${:,.0f}")
+        fig.update_traces(customdata=list(zip(per["routes"], per["total"].map(money),
+                                              per["rate"].map(lambda v: f"{money(v)}/paid hr" if pd.notna(v)
+                                                              else "no payroll"),
+                                              per["band"].map(lambda k: calc.BAND_LABEL.get(k, "")))),
+                          hovertemplate="%{y}<br><b>%{text}</b> per route<br>%{customdata[0]} routes · "
+                                        "%{customdata[1]} total<br>%{customdata[2]} · %{customdata[3]}"
+                                        "<extra></extra>")
+        show(fig)
+
+    # rows = periods (latest first), columns = drivers by total, then Unmatched and Total;
+    # each cell's range = that driver's gross profit ÷ paid hours over the period
+    sums = routes.groupby(["period", "name"]).agg(gp=("gross_profit", "sum"),
+                                                   paid=("paid", lambda s: s.sum(min_count=1)))
+    sums["band"] = [band_of(g, h, p) for g, h in zip(sums["gp"], sums["paid"])]
+    gp_tab, band_tab = sums["gp"].unstack(), sums["band"].unstack()
+    cols = list(per.sort_values("total", ascending=False).index)
+    cols += [calc.UNMATCHED_ROUTE] if calc.UNMATCHED_ROUTE in gp_tab else []
+    gp_tab = gp_tab.reindex(columns=cols)
+    gp_tab["Total"] = gp_tab.sum(axis=1, min_count=1)
+    gp_tab = gp_tab.sort_index(ascending=False)
+    band_tab = band_tab.reindex(index=gp_tab.index, columns=gp_tab.columns)  # same rows/order before relabelling
+    label = [pd.Timestamp(x).strftime("%a %m/%d" if grain == "Daily" else
+                                      "wk %m/%d" if grain == "Weekly" else "%b %Y") for x in gp_tab.index]
+    gp_tab.index = band_tab.index = pd.Index(label, name=period_label(grain))
+    band_legend()
+    st.dataframe(band_table(gp_tab, band_tab), height=min(38 + 35 * len(gp_tab), 460))
+
     unmatched = routes.loc[routes["driver"] == calc.UNMATCHED_ROUTE, "gross_profit"].sum()
+    rates = " · ".join(f"{lbl.split(' - ')[1]} \\${p[r]:,.0f}" for _, lbl, r in calc.GREEN_SHEET_BANDS[1:])
     st.caption("A route is one driver's day: every billing line goes to the driver who delivered its order "
                "(matched on SO, as on Daily Route Performance), summed per day"
                + (", and per driver over the " + {"Weekly": "week", "Monthly": "month"}[grain]
                   if grain != "Daily" else "")
-               + ". Bars are each driver's average per route over the range."
+               + ". Colour = the route's target range: its gross profit per **paid hour** (payroll, matched on "
+               f"first name) against the green sheet's rates per hour ({rates}). The whole paid day counts, so "
+               "a route can land lower than its stops do. The 3rd-party carrier has no payroll and isn't coloured."
                + (f" Unmatched: \\${unmatched:,.0f} on billing lines with no matching delivery." if unmatched else ""))
 
 

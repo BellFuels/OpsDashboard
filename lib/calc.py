@@ -186,6 +186,21 @@ def route_gross_profit(billing, deliveries):
     return out.reset_index()
 
 
+def first_name(driver):
+    """Payroll names are first names only ('Dan'); delivery names are full
+    ('DAN LOPATKIEWICZ'). This is the key that joins them."""
+    parts = str(driver or "").split()
+    return parts[0].lower() if parts else ""
+
+
+def route_paid_hours(payroll):
+    """Paid hours per route: (date, first_name(driver)) -> hours."""
+    if payroll is None or payroll.empty:
+        return pd.Series(dtype=float)
+    return payroll.assign(first=payroll["driver"].map(first_name)).groupby(
+        ["date", "first"])["hours"].sum(min_count=1)
+
+
 def stop_markup_freight(billing, iso_date):
     """Per delivery SO on a date: (markup $/gal, freight $) from the billing
     worksheet's gross-profit sheet — markup is (unit price − product cost) over
