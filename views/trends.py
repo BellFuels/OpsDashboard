@@ -277,7 +277,13 @@ def gross_profit_section(data, start, end, grain):
     b = b[(b["date"] >= start) & (b["date"] <= end)]
     if b.empty:
         st.info("No billing in this range — gross profit starts 10/1, from the billing worksheets.")
-        return
+    else:
+        range_charts(data, b, start, end, grain)
+    route_section(data, grain)  # its own date range
+
+
+def range_charts(data, b, start, end, grain):
+    """The gross-profit charts that follow the Trends date range."""
     period = period_of(b["date"], grain)
     gp = b.groupby(period)["gross_profit"].sum().sort_index()
     qty = b.groupby(period)["qty"].sum().reindex(gp.index)
@@ -324,7 +330,6 @@ def gross_profit_section(data, start, end, grain):
         fam = b.assign(f=b["product"].map(lambda c: family(c) if c else "Fees")).groupby("f")["gross_profit"].sum()
         fam = fam.sort_values(ascending=False)
         show(hbar(list(fam.index), list(fam.values), theme.SERIES[0], "gross profit", "${:,.0f}"))
-    route_section(data, b, grain)
     with st.expander("Data"):
         st.dataframe(pd.DataFrame({"gross profit": gp.round(2), "billed gallons": qty.round(1),
                                    "$ per gallon": (gp / qty).round(3)}).rename_axis(period_label(grain))
@@ -342,12 +347,15 @@ def band_of(gp, hours, p):
     return calc.pph_band(gp / hours, p)
 
 
-def band_table(gp, bands):
+def band_table(gp, bands, footer=None):
     """The route table: gross profit as text (st.dataframe shows a missing number
     as "None" whatever the Styler says, and a day off should read blank), each
-    driver cell filled with its target range's colour."""
+    driver cell filled with its target range's colour. The footer row's
+    uncoloured cells get the raised surface so the row reads as a footer."""
     styles = bands.map(lambda k: f"background-color: {theme.BAND_BG[k]}" if k in theme.BAND_BG else "")
     styles = styles.reindex(index=gp.index, columns=gp.columns).fillna("")
+    if footer in styles.index:
+        styles.loc[footer] = [s or f"background-color: {theme.CARD_BG_2}" for s in styles.loc[footer]]
     return gp.map(money).style.apply(lambda _: styles, axis=None)
 
 
@@ -360,27 +368,48 @@ def band_legend():
                 unsafe_allow_html=True)
 
 
-def route_section(data, b, grain):
+ROUTE_DEFAULT_DAYS = 14
+
+
+def route_section(data, grain):
     """Gross profit per route — each billing line matched to the driver who
     delivered its SO that day, summed per driver per day — coloured by its
     green-sheet target range: gross profit per paid hour (payroll) against the
-    same Min / Breakeven / Target / Too High rates as the stops."""
+    same Min / Breakeven / Target / Too High rates as the stops. Has its own
+    date range (not the Trends one); the grouping still follows Group by."""
+    billed = data.billing
+    if billed is None or billed.empty:
+        return
+    st.divider()
+    h1, h2 = st.columns([2.6, 1.4])
+    h1.markdown("##### Gross profit by route")
+    first, last = date.fromisoformat(billed["date"].min()), date.fromisoformat(billed["date"].max())
+    st.session_state.setdefault("route_range", (max(first, last - timedelta(days=ROUTE_DEFAULT_DAYS - 1)), last))
+    rng = h2.date_input("Route date range", key="route_range", min_value=first, max_value=last,
+                        format="MM/DD/YYYY", help="Only for this section; the charts above follow the "
+                                                  "Trends date range.")
+    if not isinstance(rng, (tuple, list)) or len(rng) != 2:
+        st.info("Pick an end date for the route range.")
+        return
+    start, end = rng[0].isoformat(), rng[1].isoformat()
+    b = billed[(billed["date"] >= start) & (billed["date"] <= end)]
     routes = calc.route_gross_profit(b, data.deliveries)
     routes = routes[routes["gross_profit"].notna()]
     if routes.empty:
+        st.info("No billing in this route range.")
         return
     p = markup_params(data)
     pay = calc.route_paid_hours(data.payroll)
     no_pay = {calc.UNMATCHED_ROUTE, THIRD_PARTY_DRIVER}
     routes = routes.assign(
-        name=routes["driver"].map(lambda d: d if d == calc.UNMATCHED_ROUTE else d.title()),
+        name=routes["driver"].map(lambda d: d if d == calc.UNMATCHED_ROUTE else
+                                  "3rd-party carrier" if d == THIRD_PARTY_DRIVER else d.title()),
         paid=[None if dr in no_pay else pay.get((d, calc.first_name(dr)))
               for d, dr in zip(routes["date"], routes["driver"])],
         period=period_of(routes["date"], grain))
     routes["band"] = [band_of(g, h, p) for g, h in zip(routes["gross_profit"], routes["paid"])]
     real = routes[routes["driver"] != calc.UNMATCHED_ROUTE]
 
-    st.markdown("##### Gross profit by route")
     left, right = st.columns([1.4, 1])
     with left:
         st.markdown("**Routes by target range**")
@@ -430,8 +459,15 @@ def route_section(data, b, grain):
     label = [pd.Timestamp(x).strftime("%a %m/%d" if grain == "Daily" else
                                       "wk %m/%d" if grain == "Weekly" else "%b %Y") for x in gp_tab.index]
     gp_tab.index = band_tab.index = pd.Index(label, name=period_label(grain))
+    # footer: each driver's sum over the route range, coloured by their range for
+    # the whole of it (total gross profit ÷ total paid hours, as the bars above)
+    gp_tab.loc["Total"] = gp_tab.sum(min_count=1)
+    band_tab.loc["Total"] = per["band"].reindex(band_tab.columns)
     band_legend()
-    st.dataframe(band_table(gp_tab, band_tab), height=min(38 + 35 * len(gp_tab), 460))
+    # tall enough to show every row (so the footer is in view) up to about a month
+    rows = len(gp_tab)
+    st.dataframe(band_table(gp_tab, band_tab, footer="Total"),
+                 height=38 + 35 * rows + 2 if rows <= 32 else 38 + 35 * 20)
 
     unmatched = routes.loc[routes["driver"] == calc.UNMATCHED_ROUTE, "gross_profit"].sum()
     rates = " · ".join(f"{lbl.split(' - ')[1]} \\${p[r]:,.0f}" for _, lbl, r in calc.GREEN_SHEET_BANDS[1:])
