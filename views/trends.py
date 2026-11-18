@@ -324,10 +324,74 @@ def gross_profit_section(data, start, end, grain):
         fam = b.assign(f=b["product"].map(lambda c: family(c) if c else "Fees")).groupby("f")["gross_profit"].sum()
         fam = fam.sort_values(ascending=False)
         show(hbar(list(fam.index), list(fam.values), theme.SERIES[0], "gross profit", "${:,.0f}"))
+    route_section(data, b, grain)
     with st.expander("Data"):
         st.dataframe(pd.DataFrame({"gross profit": gp.round(2), "billed gallons": qty.round(1),
                                    "$ per gallon": (gp / qty).round(3)}).rename_axis(period_label(grain))
                      .reset_index(), hide_index=True)
+
+
+def heat(df, cols):
+    """Cell shading for the route table: one hue, stronger for more gross profit
+    (scaled over the driver cells only, so the Total column can't wash them out,
+    and to the 95th percentile, so one huge day doesn't pale every other cell)."""
+    vals = df[cols].stack()
+    top = vals.quantile(0.95) if len(vals) else 0
+    r, g, b = (int(theme.SERIES[0][i:i + 2], 16) for i in (1, 3, 5))
+
+    def cell(v):
+        if pd.isna(v) or not top or v <= 0:
+            return ""
+        return f"background-color: rgba({r},{g},{b},{0.08 + 0.5 * min(v / top, 1):.2f})"
+    styles = pd.DataFrame("", index=df.index, columns=df.columns)
+    styles[cols] = df[cols].map(cell)
+    # text cells: st.dataframe shows a missing number as "None" whatever the
+    # Styler's na_rep says, and a day the driver didn't run should read blank
+    text = df.map(lambda v: "" if pd.isna(v) else f"{'−' if v < 0 else ''}${abs(v):,.0f}")
+    return text.style.apply(lambda _: styles, axis=None)
+
+
+def route_section(data, b, grain):
+    """Gross profit per route — each billing line matched to the driver who
+    delivered its SO that day, summed per driver per day."""
+    routes = calc.route_gross_profit(b, data.deliveries)
+    routes = routes[routes["gross_profit"].notna()]
+    if routes.empty:
+        return
+    routes = routes.assign(name=routes["driver"].map(lambda d: d if d == calc.UNMATCHED_ROUTE else d.title()))
+    real = routes[routes["driver"] != calc.UNMATCHED_ROUTE]
+    st.markdown("##### Gross profit by route")
+    left, right = st.columns([1, 1.6])
+    with left:
+        # average per route (driver-day), so a driver with fewer days isn't penalised
+        per = real.groupby("name").agg(avg=("gross_profit", "mean"), routes=("date", "nunique"),
+                                       total=("gross_profit", "sum")).sort_values("avg", ascending=False)
+        fig = hbar(list(per.index), list(per["avg"]), theme.SERIES[0], "average gross profit per route",
+                   "${:,.0f}")
+        fig.update_traces(customdata=per[["routes", "total"]].values,
+                          hovertemplate="%{y}<br><b>%{text}</b> per route<br>%{customdata[0]} routes · "
+                                        "$%{customdata[1]:,.0f} total<extra></extra>")
+        show(fig)
+    with right:
+        # rows = periods (latest first), columns = drivers by total, then Unmatched and Total
+        tab = routes.assign(period=period_of(routes["date"], grain)).pivot_table(
+            index="period", columns="name", values="gross_profit", aggfunc="sum")
+        drivers = list(per.sort_values("total", ascending=False).index)
+        cols = drivers + ([calc.UNMATCHED_ROUTE] if calc.UNMATCHED_ROUTE in tab else [])
+        tab = tab.reindex(columns=cols)
+        tab["Total"] = tab.sum(axis=1, min_count=1)
+        tab = tab.sort_index(ascending=False)
+        tab.index = [pd.Timestamp(p).strftime("%a %m/%d" if grain == "Daily" else
+                                             "wk %m/%d" if grain == "Weekly" else "%b %Y") for p in tab.index]
+        tab.index.name = period_label(grain)
+        st.dataframe(heat(tab, drivers), height=min(38 + 35 * len(tab), 460))
+    unmatched = routes.loc[routes["driver"] == calc.UNMATCHED_ROUTE, "gross_profit"].sum()
+    st.caption("A route is one driver's day: every billing line goes to the driver who delivered its order "
+               "(matched on SO, as on Daily Route Performance), summed per day"
+               + (", and per driver over the " + {"Weekly": "week", "Monthly": "month"}[grain]
+                  if grain != "Daily" else "")
+               + ". Bars are each driver's average per route over the range."
+               + (f" Unmatched: \\${unmatched:,.0f} on billing lines with no matching delivery." if unmatched else ""))
 
 
 # ─── Payroll & operations ────────────────────────────────────────────────────

@@ -167,6 +167,25 @@ def stop_gross_profit(billing, iso_date):
     return day.groupby("so")["gross_profit"].sum(min_count=1)
 
 
+UNMATCHED_ROUTE = "Unmatched"
+
+
+def route_gross_profit(billing, deliveries):
+    """Gross profit per route (a driver's day): each billing line goes to the
+    driver who delivered its SO that date, then lines are summed per date and
+    driver. Lines with no matching delivery land on UNMATCHED_ROUTE so the
+    routes still add up to the day's total. Columns: date, driver,
+    gross_profit, stops (billed SOs)."""
+    if billing is None or billing.empty:
+        return pd.DataFrame(columns=["date", "driver", "gross_profit", "stops"])
+    who = deliveries.loc[deliveries["so"] != "", ["date", "so", "driver"]].drop_duplicates(["date", "so"])
+    m = billing.merge(who, on=["date", "so"], how="left")
+    m["driver"] = m["driver"].fillna(UNMATCHED_ROUTE).replace("", UNMATCHED_ROUTE)
+    out = m.groupby(["date", "driver"]).agg(gross_profit=("gross_profit", lambda s: s.sum(min_count=1)),
+                                            stops=("so", lambda s: s[s != ""].nunique()))
+    return out.reset_index()
+
+
 def stop_markup_freight(billing, iso_date):
     """Per delivery SO on a date: (markup $/gal, freight $) from the billing
     worksheet's gross-profit sheet — markup is (unit price − product cost) over
