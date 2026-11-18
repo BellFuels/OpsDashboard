@@ -28,6 +28,12 @@ OPIS_OF = {"190": "ULSD #2 clear", "191": "ULSD #2 clear", "192": "ULSD #2 dyed"
            "200": "B20 clear", "201": "B20 clear", "202": "B20 dyed", "203": "B20 dyed",
            "070": "87 unleaded (E10)"}
 OPIS_PRODUCTS = ["ULSD #2 clear", "ULSD #2 dyed", "B20 clear", "B20 dyed", "87 unleaded (E10)"]
+# the OPIS sheet's rack columns (lib/parsing.py OPIS_PRICE_COLUMNS) -> the names above
+LOG_RACK = {"ulsd_clear": "ULSD #2 clear", "ulsd_dyed": "ULSD #2 dyed", "b20_clear": "B20 clear",
+            "b20_dyed": "B20 dyed", "unl87": "87 unleaded (E10)"}
+# rack product, its Chicago spot column, label, colour (the rack product's own)
+SPOT_PAIRS = [("ULSD #2 clear", "chi_spot_diesel", "diesel", theme.SERIES[0]),
+              ("87 unleaded (E10)", "chi_spot_gas", "gasoline", theme.SERIES[4])]
 HOVER = dict(bgcolor=theme.CARD_BG_2, bordercolor=theme.BORDER, font=dict(color=theme.INK))
 MAX_STOP_MINS = 720  # longer than a 12-hour stop is a data error, not a stop
 
@@ -162,42 +168,106 @@ def gallons_section(data, start, end, grain):
 
 # ─── OPIS prices ─────────────────────────────────────────────────────────────
 
-def opis_section(data, start, end, grain):
-    b = data.billing
-    b = b[(b["date"] >= start) & (b["date"] <= end) & (b["qty"] > 0) & b["cost"].notna()].copy()
-    b["product_name"] = b["product"].astype(str).str[:3].map(OPIS_OF)
-    b = b[b["product_name"].notna()]
-    if b.empty:
-        st.info("No OPIS-priced billing in this range — gross profit (and its OPIS costs) starts 10/1.")
+def by_period(daily, grain):
+    """Per-date prices (index = ISO date) -> the mean per period; days with no
+    price stay out of the mean, and a period with none stays blank (a gap)."""
+    return daily.groupby(period_of(pd.Series(daily.index, index=daily.index), grain)).mean().sort_index()
+
+
+def price_tile(col, label, s, delta_color="inverse"):
+    """Latest value and its change over the range (first to last day with one)."""
+    s = s.dropna()
+    if not len(s):
+        col.metric(label, "—")
         return
-    # unit cost each billed day was costed at = that day's OPIS contract average
-    b["price"] = b["cost"] / b["qty"]
-    daily = b.groupby(["date", "product_name"])["price"].median().unstack()
-    per = daily.groupby(period_of(pd.Series(daily.index, index=daily.index), grain)).mean().sort_index()
+    v = s.iloc[-1]
+    col.metric(label, f"{'−' if v < 0 else ''}${abs(v):.4f}", f"{(v - s.iloc[0]) * 100:+.1f}¢ over the range",
+               delta_color=delta_color)
+
+
+def price_layout(fig, grain, height=380):
+    fig.update_layout(hovermode="x unified")
+    layout(fig, grain, "$ per gallon", height=height, y_prefix="$", y_format=".2f")
+    fig.update_yaxes(rangemode="normal")  # prices move within ~$2–5; a zero baseline flattens them
+    return fig
+
+
+def opis_section(data, start, end, grain):
+    log = data.opis if data.opis is not None else pd.DataFrame()
+    log = log[(log["date"] >= start) & (log["date"] <= end)].set_index("date") if len(log) else log
+    if len(log):
+        # the price log itself (the builder copies it into the OPIS sheet)
+        daily = log[list(LOG_RACK)].rename(columns=LOG_RACK)
+        source = ("OPIS price log (Morning file), every logged weekday. Billed days are costed at these "
+                  "prices; Saturday and Sunday billing uses the following Monday's.")
+    else:
+        # older files: the unit cost each billed day was costed at
+        b = data.billing
+        b = b[(b["date"] >= start) & (b["date"] <= end) & (b["qty"] > 0) & b["cost"].notna()].copy()
+        b["product_name"] = b["product"].astype(str).str[:3].map(OPIS_OF)
+        b = b[b["product_name"].notna()]
+        if b.empty:
+            st.info("No OPIS prices in this range — the price log and gross profit start 10/1.")
+            return
+        b["price"] = b["cost"] / b["qty"]
+        daily = b.groupby(["date", "product_name"])["price"].median().unstack()
+        source = ("The price each billed day was costed at (this file has no OPIS sheet; Chicago spot "
+                  "appears once the file is built with the price log).")
+    per = by_period(daily, grain)
+    shown = [p for p in OPIS_PRODUCTS if p in per and per[p].notna().any()]
     st.markdown("##### OPIS rack price (contract average, $/gal)")
-    tiles = st.columns(len([p for p in OPIS_PRODUCTS if p in per]))
+    tiles = st.columns(len(shown))
     fig = go.Figure()
-    shown = [p for p in OPIS_PRODUCTS if p in per]
     for i, p in enumerate(OPIS_PRODUCTS):
-        if p not in per:
+        if p not in shown:
             continue
         s = per[p].dropna()
         fig.add_trace(go.Scatter(x=s.index, y=s.values, name=p, mode="lines+markers",
                                  line=dict(color=theme.SERIES[i], width=2), marker=dict(size=6),
                                  hovertemplate=f"{p} <b>$%{{y:.4f}}</b><extra></extra>"))
-        if len(s):
-            delta = (s.iloc[-1] - s.iloc[0]) * 100
-            tiles[shown.index(p)].metric(p, f"${s.iloc[-1]:.4f}", f"{delta:+.1f}¢ over the range",
-                                         delta_color="inverse")
-    fig.update_layout(hovermode="x unified")
-    layout(fig, grain, "$ per gallon", height=380, y_prefix="$", y_format=".2f")
-    fig.update_yaxes(rangemode="normal")  # prices move within ~$2–5; a zero baseline flattens them
-    show(fig)
-    st.caption("The price each billed day was costed at, from the day's OPIS email or price log (Sundays "
-               "use Monday's). Chicago and Gulf spot prices will follow once the price log is carried in "
-               "the unified file.")
+        price_tile(tiles[shown.index(p)], p, per[p])
+    show(price_layout(fig, grain))
+    st.caption(source)
+    table = per[shown]
+
+    if len(log) and log[["chi_spot_diesel", "chi_spot_gas"]].notna().any().any():
+        spot = by_period(log[["chi_spot_diesel", "chi_spot_gas"]], grain)
+        table = table.join(spot.rename(columns={"chi_spot_diesel": "Chicago spot diesel",
+                                                "chi_spot_gas": "Chicago spot gasoline"}))
+        st.markdown("##### Rack vs Chicago spot ($/gal)")
+        t = st.columns(4)
+        left, right = st.columns(2)
+        for (rack_name, spot_col, label, color), col, (t1, t2) in zip(
+                SPOT_PAIRS, (left, right), ((t[0], t[1]), (t[2], t[3]))):
+            rack, sp = per[rack_name], spot[spot_col]
+            # spread over the days that have both, so a missing spot day can't skew it
+            both = daily[[rack_name]].join(log[[spot_col]]).dropna()
+            spread = by_period(both[rack_name] - both[spot_col], grain).reindex(per.index)
+            table[f"{label} rack − spot"] = spread
+            price_tile(t1, f"Chicago spot {label}", sp)
+            price_tile(t2, f"{label.capitalize()} rack over spot", spread, delta_color="off")
+            fig = go.Figure()
+            fig.add_trace(go.Scatter(x=rack.index, y=rack.values, name=f"{rack_name} rack",
+                                     mode="lines+markers", line=dict(color=color, width=2), marker=dict(size=6),
+                                     hovertemplate=f"{rack_name} rack <b>$%{{y:.4f}}</b><extra></extra>"))
+            # gaps stay gaps: a line across days the log has no spot would invent prices
+            fig.add_trace(go.Scatter(x=sp.index, y=sp.values, name=f"Chicago spot {label}",
+                                     mode="lines+markers", connectgaps=False,
+                                     line=dict(color=color, width=2, dash="dash"),
+                                     marker=dict(size=7, symbol="circle-open"),
+                                     customdata=spread.reindex(sp.index).values,
+                                     hovertemplate=f"Chicago spot {label} <b>$%{{y:.4f}}</b>"
+                                                   "<br>rack over spot <b>%{customdata:$.4f}</b><extra></extra>"))
+            with col:
+                st.markdown(f"**{label.capitalize()}**")
+                show(price_layout(fig, grain, height=320))
+        missing = int(log["chi_spot_diesel"].isna().sum())
+        st.caption("Solid line: the rack price; dashed: Chicago spot from the same OPIS file. Rack over spot "
+                   "is the rack minus spot on days with both."
+                   + (f" {missing} logged day(s) in this range have no spot price (the OPIS file couldn't be "
+                      "re-read), so the dashed line has gaps there." if missing else ""))
     with st.expander("Data"):
-        st.dataframe(per.round(4).rename_axis(period_label(grain)).reset_index(), hide_index=True)
+        st.dataframe(table.round(4).rename_axis(period_label(grain)).reset_index(), hide_index=True)
 
 
 # ─── Gross profit ────────────────────────────────────────────────────────────
@@ -207,7 +277,13 @@ def gross_profit_section(data, start, end, grain):
     b = b[(b["date"] >= start) & (b["date"] <= end)]
     if b.empty:
         st.info("No billing in this range — gross profit starts 10/1, from the billing worksheets.")
-        return
+    else:
+        range_charts(data, b, start, end, grain)
+    route_section(data, grain)  # its own date range
+
+
+def range_charts(data, b, start, end, grain):
+    """The gross-profit charts that follow the Trends date range."""
     period = period_of(b["date"], grain)
     gp = b.groupby(period)["gross_profit"].sum().sort_index()
     qty = b.groupby(period)["qty"].sum().reindex(gp.index)
@@ -258,6 +334,151 @@ def gross_profit_section(data, start, end, grain):
         st.dataframe(pd.DataFrame({"gross profit": gp.round(2), "billed gallons": qty.round(1),
                                    "$ per gallon": (gp / qty).round(3)}).rename_axis(period_label(grain))
                      .reset_index(), hide_index=True)
+
+
+def money(v):
+    return "" if v is None or pd.isna(v) else f"{'−' if v < 0 else ''}${abs(v):,.0f}"
+
+
+def band_of(gp, hours, p):
+    """Green-sheet target range for gross profit over paid hours (None without hours)."""
+    if hours is None or pd.isna(hours) or hours <= 0 or gp is None or pd.isna(gp):
+        return None
+    return calc.pph_band(gp / hours, p)
+
+
+def band_table(gp, bands, footer=None):
+    """The route table: gross profit as text (st.dataframe shows a missing number
+    as "None" whatever the Styler says, and a day off should read blank), each
+    driver cell filled with its target range's colour. The footer row's
+    uncoloured cells get the raised surface so the row reads as a footer."""
+    styles = bands.map(lambda k: f"background-color: {theme.BAND_BG[k]}" if k in theme.BAND_BG else "")
+    styles = styles.reindex(index=gp.index, columns=gp.columns).fillna("")
+    if footer in styles.index:
+        styles.loc[footer] = [s or f"background-color: {theme.CARD_BG_2}" for s in styles.loc[footer]]
+    return gp.map(money).style.apply(lambda _: styles, axis=None)
+
+
+def band_legend():
+    chips = "".join(f"<span style='display:inline-flex;align-items:center;gap:6px;margin-right:16px'>"
+                    f"<span style='width:12px;height:12px;border-radius:3px;background:{theme.BAND_BG[k]};"
+                    f"border:1px solid {theme.BAND_COLOR[k]}'></span>{label}</span>"
+                    for k, label, _ in calc.GREEN_SHEET_BANDS)
+    st.markdown(f"<div style='font-size:12.5px;color:{theme.MUTED};margin:2px 0 8px'>{chips}</div>",
+                unsafe_allow_html=True)
+
+
+ROUTE_DEFAULT_DAYS = 14
+
+
+def route_section(data, grain):
+    """Gross profit per route — each billing line matched to the driver who
+    delivered its SO that day, summed per driver per day — coloured by its
+    green-sheet target range: gross profit per paid hour (payroll) against the
+    same Min / Breakeven / Target / Too High rates as the stops. Has its own
+    date range (not the Trends one); the grouping still follows Group by."""
+    billed = data.billing
+    if billed is None or billed.empty:
+        return
+    st.divider()
+    h1, h2 = st.columns([2.6, 1.4])
+    h1.markdown("##### Gross profit by route")
+    first, last = date.fromisoformat(billed["date"].min()), date.fromisoformat(billed["date"].max())
+    st.session_state.setdefault("route_range", (max(first, last - timedelta(days=ROUTE_DEFAULT_DAYS - 1)), last))
+    rng = h2.date_input("Route date range", key="route_range", min_value=first, max_value=last,
+                        format="MM/DD/YYYY", help="Only for this section; the charts above follow the "
+                                                  "Trends date range.")
+    if not isinstance(rng, (tuple, list)) or len(rng) != 2:
+        st.info("Pick an end date for the route range.")
+        return
+    start, end = rng[0].isoformat(), rng[1].isoformat()
+    b = billed[(billed["date"] >= start) & (billed["date"] <= end)]
+    routes = calc.route_gross_profit(b, data.deliveries)
+    routes = routes[routes["gross_profit"].notna()]
+    if routes.empty:
+        st.info("No billing in this route range.")
+        return
+    p = markup_params(data)
+    pay = calc.route_paid_hours(data.payroll)
+    no_pay = {calc.UNMATCHED_ROUTE, THIRD_PARTY_DRIVER}
+    routes = routes.assign(
+        name=routes["driver"].map(lambda d: d if d == calc.UNMATCHED_ROUTE else
+                                  "3rd-party carrier" if d == THIRD_PARTY_DRIVER else d.title()),
+        paid=[None if dr in no_pay else pay.get((d, calc.first_name(dr)))
+              for d, dr in zip(routes["date"], routes["driver"])],
+        period=period_of(routes["date"], grain))
+    routes["band"] = [band_of(g, h, p) for g, h in zip(routes["gross_profit"], routes["paid"])]
+    real = routes[routes["driver"] != calc.UNMATCHED_ROUTE]
+
+    left, right = st.columns([1.4, 1])
+    with left:
+        st.markdown("**Routes by target range**")
+        tab = routes.dropna(subset=["band"]).pivot_table(index="period", columns="band", values="driver",
+                                                         aggfunc="count", fill_value=0)
+        fig = go.Figure()
+        for key, label, _ in calc.GREEN_SHEET_BANDS:
+            if key in tab:
+                fig.add_trace(go.Bar(x=tab.index, y=tab[key], name=label,
+                                     marker=dict(color=theme.BAND_COLOR[key], line=dict(color=theme.CARD_BG, width=1)),
+                                     hovertemplate=f"{label}<br>%{{x|%b %d}}: <b>%{{y}} routes</b><extra></extra>"))
+        fig.update_layout(barmode="stack")
+        show(layout(fig, grain, "routes"))
+    with right:
+        st.markdown("**Average per route, by driver**")
+        # average per route (driver-day), so a driver with fewer days isn't penalised;
+        # bar colour = the driver's range over the whole range (total GP ÷ total paid hours)
+        per = real.groupby("name").agg(avg=("gross_profit", "mean"), routes=("date", "nunique"),
+                                       total=("gross_profit", "sum"), paid=("paid", "sum"))
+        per = per.sort_values("avg", ascending=False)
+        per["rate"] = per["total"] / per["paid"].where(per["paid"] > 0)
+        per["band"] = [band_of(t, h, p) for t, h in zip(per["total"], per["paid"])]
+        fig = hbar(list(per.index), list(per["avg"]),
+                   [theme.BAND_COLOR.get(k, theme.MUTED) for k in per["band"]],
+                   "average gross profit per route", "${:,.0f}")
+        fig.update_traces(customdata=list(zip(per["routes"], per["total"].map(money),
+                                              per["rate"].map(lambda v: f"{money(v)}/paid hr" if pd.notna(v)
+                                                              else "no payroll"),
+                                              per["band"].map(lambda k: calc.BAND_LABEL.get(k, "")))),
+                          hovertemplate="%{y}<br><b>%{text}</b> per route<br>%{customdata[0]} routes · "
+                                        "%{customdata[1]} total<br>%{customdata[2]} · %{customdata[3]}"
+                                        "<extra></extra>")
+        show(fig)
+
+    # rows = periods (latest first), columns = drivers by total, then Unmatched and Total;
+    # each cell's range = that driver's gross profit ÷ paid hours over the period
+    sums = routes.groupby(["period", "name"]).agg(gp=("gross_profit", "sum"),
+                                                   paid=("paid", lambda s: s.sum(min_count=1)))
+    sums["band"] = [band_of(g, h, p) for g, h in zip(sums["gp"], sums["paid"])]
+    gp_tab, band_tab = sums["gp"].unstack(), sums["band"].unstack()
+    cols = list(per.sort_values("total", ascending=False).index)
+    cols += [calc.UNMATCHED_ROUTE] if calc.UNMATCHED_ROUTE in gp_tab else []
+    gp_tab = gp_tab.reindex(columns=cols)
+    gp_tab["Total"] = gp_tab.sum(axis=1, min_count=1)
+    gp_tab = gp_tab.sort_index(ascending=False)
+    band_tab = band_tab.reindex(index=gp_tab.index, columns=gp_tab.columns)  # same rows/order before relabelling
+    label = [pd.Timestamp(x).strftime("%a %m/%d" if grain == "Daily" else
+                                      "wk %m/%d" if grain == "Weekly" else "%b %Y") for x in gp_tab.index]
+    gp_tab.index = band_tab.index = pd.Index(label, name=period_label(grain))
+    # footer: each driver's sum over the route range, coloured by their range for
+    # the whole of it (total gross profit ÷ total paid hours, as the bars above)
+    gp_tab.loc["Total"] = gp_tab.sum(min_count=1)
+    band_tab.loc["Total"] = per["band"].reindex(band_tab.columns)
+    band_legend()
+    # tall enough to show every row (so the footer is in view) up to about a month
+    rows = len(gp_tab)
+    st.dataframe(band_table(gp_tab, band_tab, footer="Total"),
+                 height=38 + 35 * rows + 2 if rows <= 32 else 38 + 35 * 20)
+
+    unmatched = routes.loc[routes["driver"] == calc.UNMATCHED_ROUTE, "gross_profit"].sum()
+    rates = " · ".join(f"{lbl.split(' - ')[1]} \\${p[r]:,.0f}" for _, lbl, r in calc.GREEN_SHEET_BANDS[1:])
+    st.caption("A route is one driver's day: every billing line goes to the driver who delivered its order "
+               "(matched on SO, as on Daily Route Performance), summed per day"
+               + (", and per driver over the " + {"Weekly": "week", "Monthly": "month"}[grain]
+                  if grain != "Daily" else "")
+               + ". Colour = the route's target range: its gross profit per **paid hour** (payroll, matched on "
+               f"first name) against the green sheet's rates per hour ({rates}). The whole paid day counts, so "
+               "a route can land lower than its stops do. The 3rd-party carrier has no payroll and isn't coloured."
+               + (f" Unmatched: \\${unmatched:,.0f} on billing lines with no matching delivery." if unmatched else ""))
 
 
 # ─── Payroll & operations ────────────────────────────────────────────────────

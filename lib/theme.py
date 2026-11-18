@@ -58,6 +58,9 @@ SERIES = ["#3987e5", "#d95926", "#199e70", "#c98500", "#d55181"]
 LIME = "#C9D63A"             # meets breakeven
 PURPLE = "#A07BE0"           # too high
 BAND_COLOR = {"below_min": RED, "min": ACCENT, "breakeven": LIME, "target": GREEN, "too_high": PURPLE}
+# cell fills for the same ranges (Trends route table): the band colour as a tint
+BAND_BG = {k: "rgba({},{},{},0.34)".format(*(int(c[i:i + 2], 16) for i in (1, 3, 5)))
+           for k, c in BAND_COLOR.items()}
 BAND_STYLE = {"below_min": RED_BG, "min": ORANGE_BG,
               "breakeven": "background-color: rgba(201,214,58,0.18)",
               "target": GREEN_FG, "too_high": f"color: {PURPLE}"}
