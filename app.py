@@ -18,7 +18,7 @@ import streamlit as st
 
 from lib import theme
 from lib.parsing import ALL_SERVICE_TYPES, UnifiedData, UnifiedFileError, fmt_hhmmss, load_unified
-from views import daily, drivers, payroll, quick_view, route_sheets, stops, trends
+from views import daily, drivers, payroll, quick_view, route_sheets, stops, trends, whats_new
 from views.common import day_label, iso_to_mdy, nearest_date
 
 VIEWS = {
@@ -29,9 +29,10 @@ VIEWS = {
     "Payroll & HOS": payroll,
     "Route Sheets": route_sheets,
     "Trends": trends,
+    "What's New": whats_new,
 }
 # views that work before a unified file is loaded (render gets data=None)
-NO_FILE_VIEWS = {"Route Sheets"}
+NO_FILE_VIEWS = {"Route Sheets", "What's New"}
 
 st.set_page_config(page_title="EBDB — Everyday Bell Dashboard", page_icon="◆", layout="wide")
 st.markdown(theme.CSS, unsafe_allow_html=True)
@@ -158,6 +159,6 @@ h1.markdown(f"<div class='view-title'>{view}<small>{day_label(sel_date) if sel_d
 if data is None and view not in NO_FILE_VIEWS:
     st.info("**Drop the unified file from the daily email into the box in the left sidebar** "
             "(Bell_Unified_….xlsx). Nothing is stored — you upload it each visit. "
-            "Route Sheets works without it.")
+            "Route Sheets and What's New work without it.")
     st.stop()
 VIEWS[view].render(data, sel_date)
