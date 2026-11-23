@@ -2,11 +2,12 @@
 
 The Bell Fuels operations dashboard. Users upload the daily unified workbook
 (`Bell_Unified_<date>.xlsx`, produced by `scripts/build_unified.py` and
-emailed each day) and get seven views: Quick View (Performance Snapshot: gallons vs goal and gross profit; at-a-glance
+emailed each day) and get eight views: Quick View (Performance Snapshot: gallons vs goal and gross profit; at-a-glance
 table, shift timeline), Daily Route Performance, Stop Averages, Drivers, a
-read-only Payroll & HOS grid, Route Sheets, and Trends (charts over a date range:
+read-only Payroll & HOS grid, Route Sheets, Trends (charts over a date range:
 gallons, OPIS rack and Chicago spot prices, gross profit, payroll and operations;
-prices come from the file's OPIS sheet, a copy of the OPIS price log). One date, picked
+prices come from the file's OPIS sheet, a copy of the OPIS price log), and What's New
+(the change log, in `views/whats_new.py`; add each new feature there). One date, picked
 in the sidebar, drives every view except Trends, which has its own date range; the
 file's settings sit under "About this file" in the sidebar.
 
