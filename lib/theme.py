@@ -155,23 +155,25 @@ h1, h2, h3, h4, h5, h6 {{ font-family: {DISPLAY}; font-weight: 600; letter-spaci
 .glance tr.total td:first-child {{ font-weight: 600; }}
 
 /* ── What's New (change log) ── */
-.wn {{ max-width: 780px; }}
-.wn-month {{ font-family: {DISPLAY}; font-weight: 600; font-size: 1.2rem; margin: 1.6rem 0 .2rem; padding-bottom: .4rem; border-bottom: 1px solid {BORDER}; color: {INK}; }}
-.wn-list {{ list-style: none; margin: 0; padding: 0; }}
-.wn-list li {{ display: grid; grid-template-columns: 54px minmax(0,1fr); gap: 14px; padding: 12px 0;
-    border-bottom: 1px solid {BORDER_SOFT}; margin: 0; }}
-.wn-list li:last-child {{ border-bottom: 0; }}
+.st-key-wn_list {{ max-width: 780px; gap: 0; }}
+/* keyed containers are not panels: undo the bordered-container fill above */
+[data-testid="stLayoutWrapper"] > [data-testid="stVerticalBlock"][class*="st-key-wn_"] {{ background: transparent; }}
+.wn-month {{ font-family: {DISPLAY}; font-weight: 600; font-size: 1.2rem; margin: 1.6rem 0 0; padding-bottom: .4rem; border-bottom: 1px solid {BORDER}; color: {INK}; }}
+[class*="st-key-wn_e"] {{ padding: 12px 0 8px; border-bottom: 1px solid {BORDER_SOFT}; gap: .25rem; }}
 .wn-date {{ font-family: {DISPLAY}; font-weight: 600; font-size: 15px; color: {MUTED}; }}
 .wn-head {{ display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; }}
 .wn-head b {{ color: {INK}; font-weight: 600; font-size: 15px; }}
 .wn-tag {{ font-size: 11.5px; color: {MUTED}; background: {CARD_BG_2}; border-radius: 4px; padding: 1px 7px; white-space: nowrap; }}
 .wn-what p {{ margin: 3px 0 0; color: {MUTED}; font-size: 14px; max-width: 66ch; }}
+/* "Open …" links: tertiary buttons in the accent, tight to the text */
+[class*="st-key-wn_go"] button {{ color: {ACCENT}; min-height: 0; padding: 2px 0; font-size: 13.5px; }}
+.st-key-scroll_top {{ display: none; }}  /* the scroll-to-top script frame */
+[class*="st-key-wn_go"] button:hover {{ color: {INK}; }}
 .wn-build {{ margin-top: 1.8rem; background: {CARD_BG}; border: 1px solid {BORDER}; border-radius: 8px; padding: 2px 18px 14px; }}
 .wn-build .wn-month {{ border: 0; margin-top: .9rem; }}
 .wn-build ul {{ margin: 0; padding-left: 18px; color: {MUTED}; font-size: 14px; }}
 .wn-build li {{ margin: 0 0 6px; }}
 .wn-build b {{ color: {INK}; font-weight: 600; }}
-@media (max-width: 560px) {{ .wn-list li {{ grid-template-columns: 1fr; gap: 2px; }} }}
 
 /* ── Plotly: round the off-white timeline panel to match the cards ── */
 [data-testid="stPlotlyChart"] {{ border-radius: 12px; overflow: hidden; }}

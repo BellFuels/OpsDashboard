@@ -99,7 +99,8 @@ def render(data, sel_date):
     rng = c1.date_input("Date range", key="trend_range", min_value=first, max_value=last,
                         format="MM/DD/YYYY")
     grain = c2.segmented_control("Group by", GRAINS, default="Daily", key="trend_grain") or "Daily"
-    section = c3.segmented_control("Section", SECTIONS, default="Gallons", key="trend_section") or "Gallons"
+    st.session_state.setdefault("trend_section", "Gallons")  # What's New links set it
+    section = c3.segmented_control("Section", SECTIONS, key="trend_section") or "Gallons"
     if not isinstance(rng, (tuple, list)) or len(rng) != 2:
         st.info("Pick an end date for the range.")
         return
