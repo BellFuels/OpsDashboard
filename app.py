@@ -15,6 +15,7 @@ import os
 from datetime import date
 
 import streamlit as st
+import streamlit.components.v1 as components
 
 from lib import theme
 from lib.parsing import ALL_SERVICE_TYPES, UnifiedData, UnifiedFileError, fmt_hhmmss, load_unified
@@ -152,10 +153,15 @@ side.caption("🔒 Data lives in this session's memory only. Closing the tab (or
 # ─── Main: one view at a time ────────────────────────────────────────────────
 
 h1, h2 = st.columns([1.6, 2.4])  # room for "Daily Route Performance" on one line
-view = h2.segmented_control("View", list(VIEWS), default="Quick View", key="view",
+st.session_state.setdefault("view", "Quick View")  # a state default, so What's New links can set it
+view = h2.segmented_control("View", list(VIEWS), key="view",
                             label_visibility="collapsed") or "Quick View"
 h1.markdown(f"<div class='view-title'>{view}<small>{day_label(sel_date) if sel_date else ''}</small></div>",
             unsafe_allow_html=True)
+if st.session_state.pop("scroll_top", False):  # a What's New link: open the new view at its top
+    with st.container(key="scroll_top"):
+        components.html("<script>window.parent.document.querySelector('[data-testid=stMain]')"
+                        ".scrollTo(0, 0)</script>", height=0)
 if data is None and view not in NO_FILE_VIEWS:
     st.info("**Drop the unified file from the daily email into the box in the left sidebar** "
             "(Bell_Unified_….xlsx). Nothing is stored — you upload it each visit. "
