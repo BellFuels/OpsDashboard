@@ -14,6 +14,10 @@ import streamlit as st
 
 CHANGES = [
     ("November 2026", [
+        ("11/25", "New name: Bell Fuels Performance Dashboard",
+         "EBDB is now the Bell Fuels Performance Dashboard, a name that fits operations today and "
+         "the sales features to come. Nothing else changed.",
+         [], "All views"),
         ("11/18", "Gross profit by route",
          "Each driver's gross profit for each day's route. The route table has one row per day "
          "and one column per driver, with Unmatched and Total columns and a footer with each "

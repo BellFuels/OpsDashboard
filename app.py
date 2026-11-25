@@ -1,5 +1,5 @@
 """
-EBDB — the Everyday Bell Dashboard for Bell Fuels Service Co.
+Bell Fuels Performance Dashboard — for Bell Fuels Service Co.
 
 Reads the daily unified workbook (Bell_Unified_<date>.xlsx) uploaded by the
 user each session. All data lives in this session's memory only: nothing is
@@ -35,15 +35,15 @@ VIEWS = {
 # views that work before a unified file is loaded (render gets data=None)
 NO_FILE_VIEWS = {"Route Sheets", "What's New"}
 
-st.set_page_config(page_title="EBDB — Everyday Bell Dashboard", page_icon="◆", layout="wide")
+st.set_page_config(page_title="Bell Fuels Performance Dashboard", page_icon="◆", layout="wide")
 st.markdown(theme.CSS, unsafe_allow_html=True)
 
 
 # ─── Sidebar: brand, upload gate, the shared date, file settings ─────────────
 
 side = st.sidebar
-side.markdown("<div class='brand'><span class='mark'>◆</span><span class='name'>EBDB</span></div>"
-              "<div class='brand-long'>Everyday Bell Dashboard · Bell Fuels Service Co.</div>",
+side.markdown("<div class='brand'><span class='mark'>◆</span><span class='name'>Bell Fuels</span></div>"
+              "<div class='brand-long'>Performance Dashboard</div>",
               unsafe_allow_html=True)
 uploaded = side.file_uploader("Unified file (Bell_Unified_….xlsx)", type=["xlsx"],
                               help="The file from the daily email. It stays in this "

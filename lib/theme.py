@@ -1,5 +1,5 @@
 """
-theme.py — the EBDB palette, fonts, and the shared style strings.
+theme.py — the Performance Dashboard palette, fonts, and the shared style strings.
 
 Every color the app or a chart uses comes from here, so app.py, the views and
 lib/timeline.py all draw from one set. The dark surfaces match
@@ -96,7 +96,7 @@ h1, h2, h3, h4, h5, h6 {{ font-family: {DISPLAY}; font-weight: 600; letter-spaci
 .brand {{ display: flex; align-items: baseline; gap: .5rem; }}
 .brand .mark {{ color: {ACCENT}; font-size: 1.25rem; align-self: center; }}
 .brand .name {{ font-family: {DISPLAY}; font-weight: 700; font-size: 1.7rem; line-height: 1; color: {INK}; }}
-.brand-long {{ font-size: .78rem; color: {MUTED}; margin: .15rem 0 .6rem; }}
+.brand-long {{ font-family: {DISPLAY}; font-weight: 600; font-size: 1.02rem; color: {MUTED}; margin: .1rem 0 .7rem 1.75rem; }}
 
 /* ── View heading ── */
 .view-title {{ font-family: {DISPLAY}; font-weight: 700; font-size: 1.55rem; line-height: 1.05; color: {INK}; margin: .2rem 0 0; }}
