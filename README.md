@@ -1,6 +1,6 @@
-# EBDB — Everyday Bell Dashboard
+# Bell Fuels Performance Dashboard
 
-The Bell Fuels operations dashboard. Users upload the daily unified workbook
+The Bell Fuels performance dashboard: operations today, sales to come. Users upload the daily unified workbook
 (`Bell_Unified_<date>.xlsx`, produced by `scripts/build_unified.py` and
 emailed each day) and get eight views: Quick View (Performance Snapshot: gallons vs goal and gross profit; at-a-glance
 table, shift timeline), Daily Route Performance, Stop Averages, Drivers, a
